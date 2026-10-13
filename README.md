@@ -5,20 +5,42 @@ desktop virtual machine. You talk to it from a web chat page, watch its screen,
 and take over the mouse and keyboard when you need to.
 
 > Status: early. v1 runs end to end on one Incus host; expect rough edges.
-> [Install it](docs/install.md).
+
+![The web page: chat with the agent on the left, its live desktop on the right](docs/screenshot.png)
+
+## Quick start
+
+On an Ubuntu 24.04 host with [Incus](https://linuxcontainers.org/incus/) and KVM:
+
+```bash
+git clone https://github.com/vesten-ai/personal-agent-computer.git
+cd personal-agent-computer
+sudo ./install.sh                     # about five minutes the first time
+```
+
+Put a model key in the gateway (the installer prints how), then either open the page through an SSH
+tunnel or use the terminal:
+
+```bash
+pac create assistant
+pac send assistant "Open Wikipedia and tell me who designed the first personal computer"
+```
+
+The full guide, including credentials and connectors, is in [docs/install.md](docs/install.md).
 
 ## How it fits together
 
 ```
-  browser ──► gateway (outside the VM) ──► model APIs
-                 │  agent loop                (OpenAI Responses,
-                 │  web chat                   Anthropic Messages)
-                 │  egress proxy: swaps placeholder credentials for real ones
-                 ▼
-            Incus desktop VM, one per agent
-              XFCE on Xvfb, Chromium, office suite, dev tools
-              computer-use + browser tools exposed over MCP
-              holds placeholders only, never real credentials
+  browser / pac CLI ──► gateway (outside the VMs) ──► model APIs
+                           │  agent loop                (OpenAI Responses,
+                           │  web chat, live screen      Anthropic Messages)
+                           │  MCP connectors
+                           │  egress proxy: swaps placeholder credentials for real ones
+                           ▼
+                      Incus desktop VM, one per agent
+                        XFCE, Chromium, LibreOffice, CJK input, dev tools
+                        computer-use daemon (screenshots, mouse, keyboard)
+                        holds placeholders only, never real credentials
 ```
 
 - **The agent loop runs in the gateway, not in the VM.** The VM is the agent's
@@ -30,15 +52,21 @@ and take over the mouse and keyboard when you need to.
   placeholder tokens. The gateway's egress proxy replaces them with the real
   secret on the way out, for the destinations each secret is allowed to reach.
 - **Two model APIs.** The OpenAI Responses API and the Anthropic Messages API.
-- **Connectors over MCP.** v1 ships the MCP connector interface and no built-in
-  connectors.
+- **Connectors over MCP.** Connectors are MCP servers the gateway runs outside
+  the VMs, so their credentials never reach an agent's computer. v1 ships the
+  interface and one example.
+- **Sleep and approvals.** Idle computers pause, then shut down, and wake on the
+  next message. Before paying, sending or deleting, the agent asks you.
 
-## v1 scope
+## What v1 does and doesn't do
 
-- A plain web chat page.
-- One desktop VM per agent on an Incus host.
+- A plain web chat page and a `pac` command line.
+- One desktop VM per agent on a single Incus host.
 - Watching and taking over the agent's screen from the browser.
-- No messaging-app integrations and no bundled connectors.
+- No messaging-app integrations, no bundled connectors, no multi-user accounts: one admin token.
+- Known gaps: DNS lookups are not restricted yet, and Claude computer use and OpenAI's built-in
+  computer tool have only been tested offline (live runs so far use an OpenAI-compatible relay with
+  computer use as a function tool).
 
 ## Repository layout
 

@@ -3,12 +3,19 @@
 # Run as root on the Incus host after host/setup.sh, image/build.sh and the gateway.
 #
 #   spikes/04-density/measure.sh [count] [memory] [cpus]      defaults: 3 4GiB 2
+#   FPR=1 spikes/04-density/measure.sh                         with virtio-balloon free page reporting
 #
 # Each VM boots the desktop image, trusts the gateway CA, opens Chromium on a real page and idles
 # for a minute before memory is read. Memory is read on the host (the QEMU process: RSS and PSS,
 # PSS splits pages KSM or the page cache share between VMs) and in the guest (free).
 set -uo pipefail
 N=${1:-3}; MEM=${2:-4GiB}; CPU=${3:-2}
+FPR=${FPR:-0}
+EXTRA=()
+if [ "$FPR" = 1 ]; then  # Incus 6.0 attaches the balloon without free page reporting; override its section
+  EXTRA=(-c 'raw.qemu.conf=[device "qemu_balloon"]
+free-page-reporting = "on"')
+fi
 IMG=${PAC_IMAGE:-pac-desktop/dev}
 P=(--project pac)
 OUT=${OUT:-/root/spike4-$(date -u +%Y%m%dT%H%M%S).log}
@@ -36,7 +43,7 @@ mem_line() {  # host RSS/PSS of the VM's QEMU process and guest-side used memory
 }
 host_avail() { awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo; }
 
-log "== spike 4 on $(hostname), $(date -u +%FT%TZ): $N x ($CPU vCPU, $MEM), image $IMG"
+log "== spike 4 on $(hostname), $(date -u +%FT%TZ): $N x ($CPU vCPU, $MEM), image $IMG, free page reporting=$FPR"
 log "host: $(nproc) threads, $(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo) MiB total, $(host_avail) MiB available"
 log "ksm: run=$(cat /sys/kernel/mm/ksm/run 2>/dev/null) pages_sharing=$(cat /sys/kernel/mm/ksm/pages_sharing 2>/dev/null)"
 AVAIL0=$(host_avail)
@@ -47,7 +54,7 @@ for i in $(seq 1 "$N"); do
   t=$(now)
   incus launch "$IMG" "$vm" "${P[@]}" --vm -c limits.cpu="$CPU" -c limits.memory="$MEM" \
     -c security.secureboot=false -c migration.stateful=true \
-    -d root,size=20GiB -d root,size.state="$MEM" >/dev/null
+    -d root,size=20GiB -d root,size.state="$MEM" "${EXTRA[@]}" >/dev/null
   wait_agent "$vm"; a=$(since "$t")
   wait_desktop "$vm"; d=$(since "$t")
   log "boot $vm  agent_ready=${a}s desktop_ready=${d}s (first boot, includes cloud-init)"
@@ -63,6 +70,14 @@ for i in $(seq 1 "$N"); do mem_line pac-d$i; done
 AVAIL1=$(host_avail)
 log "host available: before=${AVAIL0}MiB after=${AVAIL1}MiB  => $(( (AVAIL0 - AVAIL1) / N )) MiB per VM"
 log "ksm: pages_sharing=$(cat /sys/kernel/mm/ksm/pages_sharing 2>/dev/null)"
+log "balloon: $(grep -c 'free-page-reporting = "on"' /run/incus/pac_pac-d1/qemu.conf 2>/dev/null || echo 0) free-page-reporting line(s) in pac-d1's qemu.conf"
+
+log "== drop guest page caches, wait 20s"
+for i in $(seq 1 "$N"); do incus exec "${P[@]}" "pac-d$i" -- sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'; done
+sleep 20
+for i in $(seq 1 "$N"); do mem_line "pac-d$i"; done
+AVAIL2=$(host_avail)
+log "host available after dropping caches: ${AVAIL2}MiB  => $(( (AVAIL0 - AVAIL2) / N )) MiB per VM"
 
 log "== stateful stop and wake (pac-d1)"
 before=$(as_agent pac-d1 pgrep -o chromium)

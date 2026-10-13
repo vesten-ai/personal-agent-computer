@@ -148,7 +148,7 @@ function add(ev) {
   log.querySelector(".empty")?.remove();
   const div = document.createElement("div");
   div.className = "msg " + cls;
-  if (ev.kind === "text") div.innerHTML = inline(text); else div.textContent = text;
+  if (ev.kind === "text" || ev.kind === "thinking") div.innerHTML = inline(text); else div.textContent = text;
   log.append(div);
   log.scrollTop = log.scrollHeight;
 }
@@ -224,7 +224,10 @@ function connectScreen(id) {
   r.viewOnly = !takenOver;
   r.scaleViewport = true;
   r.background = "#000";
-  r.addEventListener("connect", () => { el.hidden = false; $("screen").hidden = $("noscreen").hidden = true; });
+  r.addEventListener("connect", () => {
+    if (rfb !== r) return;
+    el.hidden = false; $("screen").hidden = $("noscreen").hidden = true;
+  });
   r.addEventListener("disconnect", () => {
     if (rfb !== r) return;
     rfb = null;
@@ -243,6 +246,7 @@ async function select(id) {
   $("log").replaceChildren();
   $("screen").src = `/api/agents/${id}/screen.png?t=${Date.now()}`;
   const { events } = await api(`/api/agents/${id}/events`);
+  if (current !== id) return;  // another agent was picked while this one loaded
   replaying = true;
   events.forEach(add);
   replaying = false;

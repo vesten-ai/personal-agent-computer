@@ -104,10 +104,15 @@ the same way; give them credentials through `secret_env`, never through the VM.
 
 ## Sleep
 
-An agent that is idle for 10 minutes has its VM paused (resumes instantly); after 2 hours it is shut
-down (about 10 seconds to wake). The next message wakes it. Change `idle_pause_minutes` and
-`idle_stop_minutes` in `gateway.toml`; 0 turns a stage off. A screen open in the browser keeps the
-computer awake.
+An agent that is idle for 10 minutes has its VM paused (resumes in a few seconds, memory stays in use).
+After 2 hours the VM is stopped with its memory saved to disk, so it uses no memory. It wakes in 10 to
+15 seconds with the same windows open; if the saved state can't be restored, it boots fresh. The next
+message wakes it. A screen open in the browser keeps the computer awake.
+
+Change `idle_pause_minutes` and `idle_stop_minutes` in `gateway.toml`; 0 turns a stage off. With
+`idle_stop_stateful = false` the second stage is a plain shutdown instead, which is faster (about 10
+seconds to wake) but closes every window. A saved VM takes up to its memory size (4 GiB by default) on
+disk.
 
 ## Updating
 

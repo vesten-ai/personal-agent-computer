@@ -1,7 +1,9 @@
 import shlex
+import subprocess
 import unittest
+from unittest import mock
 
-from pac_gateway.manager import IncusManager
+from pac_gateway.manager import IncusManager, ManagerError, mib
 
 
 class Argv(unittest.TestCase):
@@ -36,6 +38,33 @@ class Argv(unittest.TestCase):
         m._run = lambda *a, **k: '[{"name": "pac-x", "status": "Stopped", "state": {"network": null}}]'
         info = m.info("pac-x")
         self.assertEqual((info.state, info.address), ("Stopped", None))
+
+    def test_a_saved_vm_that_wont_restore_boots_fresh(self):
+        m = IncusManager(project="pac")
+        calls = []
+
+        def run(*args, **kw):
+            calls.append(args)
+            if args[0] == "list":
+                return '[{"name": "pac-x", "status": "Stopped", "stateful": true, "state": {"network": null}}]'
+            if args[0] == "start" and "--stateless" not in args:
+                raise ManagerError("restore failed")
+            return ""
+        m._run = run
+        self.assertEqual(m.start("pac-x"), "booted")
+        self.assertEqual(calls[-1], ("start", "pac-x", "--stateless"))
+
+    def test_reclaim_shrinks_the_balloon_and_grows_it_back(self):
+        m = IncusManager(project="pac", memory="4GiB")
+        sets = []
+        m._run = lambda *a, **k: sets.append(a[-1]) or ""
+        meminfo = subprocess.CompletedProcess([], 0, stdout="4002000\n3280000\n")  # ~705 MiB used
+        with mock.patch.object(subprocess, "run", return_value=meminfo):
+            m.reclaim_memory("pac-x")
+        self.assertEqual(sets, ["limits.memory=1536MiB", "limits.memory=4095MiB", "limits.memory=4GiB"])
+
+    def test_memory_sizes(self):
+        self.assertEqual((mib("4GiB"), mib("1536MiB")), (4096, 1536))
 
 
 if __name__ == "__main__":

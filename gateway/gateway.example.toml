@@ -12,6 +12,11 @@ egress_policy_file = "/etc/pac/egress-policy.json"
 egress_base_policy = "/etc/pac/egress-base.json"
 default_model = "gpt"
 max_steps = 60
+# Idle computers are paused, then stopped (with their windows saved unless idle_stop_stateful = false).
+# A new message wakes them. 0 turns a stage off.
+idle_pause_minutes = 10
+idle_stop_minutes = 120
+idle_stop_stateful = true
 
 [incus]
 # The incus CLI, pointed at the host through a remote whose certificate is restricted to `project`.

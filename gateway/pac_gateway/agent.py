@@ -58,7 +58,7 @@ class AgentSession:
         self.pending_note = ""       # told to the model on its next turn
         self.computer: Computer | None = None
         self.last_active = time.time()
-        self.sleep_state: str | None = None   # "paused" or "stopped" while the computer sleeps
+        self.sleep_state: str | None = None   # "paused", "saved" or "stopped" while the computer sleeps
         self.viewers = 0                      # live screens open in a browser keep the computer awake
         self.pending: dict | None = None      # a question the agent is waiting on
         self.adapter = self._make_adapter()
@@ -195,26 +195,49 @@ class AgentSession:
 
     def wake(self) -> None:
         """Bring the computer back from sleep (blocking; call from a worker thread)."""
-        mgr = self.rt.manager
-        if mgr.info(self.row["vm"]).state != "Running":
+        mgr, vm = self.rt.manager, self.row["vm"]
+        if mgr.info(vm).state != "Running":
             self.emit("notice", {"text": "Waking the computer..."})
             t0 = time.time()
-            mgr.start(self.row["vm"])
-            mgr.wait_ready(self.row["vm"])
+            how = mgr.start(vm)
+            mgr.wait_ready(vm)
+            mgr.sync_clock(vm)
             self.close_computer()
-            self.emit("notice", {"text": f"The computer is awake ({time.time() - t0:.0f} s)."})
+            if how == "restored":
+                threading.Thread(target=self._reclaim, daemon=True).start()
+            note = {"restored": "; its windows are as it left them",
+                    "booted": "; it started fresh" if self.sleep_state == "saved" else ""}.get(how, "")
+            self.emit("notice", {"text": f"The computer is awake ({time.time() - t0:.0f} s){note}."})
         if self.sleep_state:
             self.sleep_state = None
             self.emit("status", {"status": self.row["status"]})
         self.touch()
 
+    def _reclaim(self) -> None:
+        try:
+            self.rt.manager.reclaim_memory(self.row["vm"])
+        except Exception:
+            pass  # only costs memory
+
     def sleep(self, how: str, idle: bool = True) -> None:
-        """Pause or stop the computer (blocking; call from a worker thread)."""
+        """Pause or stop the computer (blocking; call from a worker thread). A stop saves the session
+        when idle_stop_stateful is on and the save works; sleep_state then says "saved"."""
         self.close_computer()
         why = "The computer was idle and has" if idle else "The computer has"
         if how == "stopped":
-            self.rt.manager.stop(self.row["vm"])
-            self.emit("notice", {"text": f"{why} been shut down. A new message wakes it."})
+            mgr = self.rt.manager
+            if self.rt.cfg.idle_stop_stateful:
+                try:
+                    mgr.stop(self.row["vm"], stateful=True)
+                    how = "saved"
+                except Exception as e:
+                    self.emit("notice", {"text": f"Saving the open windows failed ({e}); shutting down instead."[:500]})
+            if how == "saved":
+                self.emit("notice", {"text": f"{why} been put to sleep with its windows saved. "
+                                             "A new message wakes it."})
+            else:
+                mgr.stop(self.row["vm"])
+                self.emit("notice", {"text": f"{why} been shut down. A new message wakes it."})
         else:
             self.rt.manager.pause(self.row["vm"])
             self.emit("notice", {"text": f"{why} been paused. A new message wakes it."})
@@ -259,10 +282,10 @@ class Runtime:
             if session.row["status"] in ("creating", "error"):
                 continue
             try:
-                state = self.manager.info(session.row["vm"]).state
+                info = self.manager.info(session.row["vm"])
             except Exception:
                 continue
-            session.sleep_state = {"Frozen": "paused", "Stopped": "stopped"}.get(state)
+            session.sleep_state = {"Frozen": "paused", "Stopped": "saved" if info.saved else "stopped"}.get(info.state)
         self.write_egress_policy()
 
     async def _reap_idle(self) -> None:
@@ -277,7 +300,7 @@ class Runtime:
                     continue
                 idle = now - session.last_active
                 how = None
-                if stop_s and idle >= stop_s and session.sleep_state != "stopped":
+                if stop_s and idle >= stop_s and session.sleep_state not in ("saved", "stopped"):
                     how = "stopped"
                 elif pause_s and idle >= pause_s and session.sleep_state is None:
                     how = "paused"
