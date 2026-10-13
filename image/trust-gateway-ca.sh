@@ -23,11 +23,12 @@ cat > /etc/profile.d/pac-ca.sh <<SH
 export NODE_EXTRA_CA_CERTS=$CA                          # Node, npm, Bun
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt   # Python requests (certifi)
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt        # httpx, many OpenSSL-linked tools
-export UV_NATIVE_TLS=true                                      # uv defaults to webpki roots
+export UV_SYSTEM_CERTS=true                                    # uv defaults to its bundled webpki roots
+export UV_NATIVE_TLS=true                                      # the older name of the same switch
 SH
 # Also for non-login processes (systemd user services, the gateway's exec sessions).
 for kv in "NODE_EXTRA_CA_CERTS=$CA" "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" \
-          "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" "UV_NATIVE_TLS=true"; do
+          "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" "UV_SYSTEM_CERTS=true" "UV_NATIVE_TLS=true"; do
   grep -q "^${kv%%=*}=" /etc/environment && sed -i "s#^${kv%%=*}=.*#$kv#" /etc/environment || echo "$kv" >> /etc/environment
 done
 echo "gateway CA trusted: $(openssl x509 -in "$CA" -noout -subject)"

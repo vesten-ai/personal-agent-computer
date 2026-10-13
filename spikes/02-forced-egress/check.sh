@@ -9,7 +9,7 @@ IF=$(ip -4 route show default | awk '{print $5; exit}'); IF=${IF:-eth0}
 MYIP=$(ip -4 -o addr show dev "$IF" | awk '{print $4; exit}')
 fail=0
 
-expect() {  # expect <want: open|blocked> <label> <command...>
+expect() {  # expect <want: open|blocked> <label> <command...>; curl -f so a proxy refusal (HTTP 403/502) counts as blocked
   local want=$1 label=$2; shift 2
   if timeout 8 "$@" >/dev/null 2>&1; then got=open; else got=blocked; fi
   if [ "$got" = "$want" ]; then echo "ok       $label ($got)"; else echo "FAIL     $label (want $want, got $got)"; fail=1; fi
@@ -19,7 +19,7 @@ tcp() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2"; }
 echo "== baseline: the sanctioned path works"
 expect open    "default route is the gateway"                   sh -c "ip -4 route show default | grep -q 'via $GW'"
 expect open    "DNS through the gateway"                        getent hosts example.com
-expect open    "HTTPS through the gateway (transparent proxy)"  curl -sS -o /dev/null https://example.com
+expect open    "HTTPS through the gateway (transparent proxy)"  curl -fsS -o /dev/null https://example.com
 
 echo "== bypass attempts"
 expect blocked "TCP to a public IP on a non-web port (1.1.1.1:22)"     tcp 1.1.1.1 22
@@ -30,8 +30,8 @@ expect blocked "host bridge address, SSH"                              tcp "$HOS
 expect blocked "host bridge address, Incus API"                        tcp "$HOSTBR" 8443
 expect blocked "host bridge address, DNS (host's dnsmasq)"             tcp "$HOSTBR" 53
 expect blocked "host public address, SSH"                              tcp "$HOSTPUB" 22
-expect blocked "host public address, HTTPS (via proxy)"                curl -sS -o /dev/null -k "https://$HOSTPUB/"
-expect blocked "cloud metadata address"                                curl -sS -o /dev/null -m5 http://169.254.169.254/
+expect blocked "host public address, HTTPS (via proxy)"                curl -fsS -o /dev/null -k "https://$HOSTPUB/"
+expect blocked "cloud metadata address"                                curl -fsS -o /dev/null -m5 http://169.254.169.254/
 expect blocked "gateway, a port that is not the proxy (22)"            tcp "$GW" 22
 if [ -n "$PEER" ]; then
   expect blocked "another agent VM (ICMP)"                             ping -c1 -W3 "$PEER"

@@ -72,8 +72,9 @@ devices:
     network: pac-br0
     name: eth0
     ipv4.address: $GW_IP
+    # No ipv4_filtering here: the gateway answers transparently-proxied connections with the
+    # original destination as source address, which IP filtering would drop as spoofed.
     security.mac_filtering: "true"
-    security.ipv4_filtering: "true"
 YAML
 incus profile show build --project pac >/dev/null 2>&1 || incus profile create build --project pac
 incus profile edit build --project pac <<YAML

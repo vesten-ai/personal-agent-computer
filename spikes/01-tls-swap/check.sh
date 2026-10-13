@@ -17,8 +17,10 @@ PH_ANTHROPIC=sk-ant-pac-anthropic-placeholder-0001
 PH_GITHUB=ghp_pacGithubPlaceholder000000000000001
 PH_ECHO=sk-pac-echo-placeholder-0001
 
-bare_env() { env -i HOME="$HOME" PATH="$PATH" USER="$USER" LANG=C.UTF-8 DISPLAY=:1 "$@"; }
-conf_env() { env -i HOME="$HOME" PATH="$PATH" USER="$USER" LANG=C.UTF-8 DISPLAY=:1 bash -c '. /etc/profile.d/pac-ca.sh; exec "$@"' _ "$@"; }
+# Command prefixes (arrays, so `timeout` can run them).
+BARE=(env -i HOME="$HOME" PATH="$PATH" USER="$USER" LANG=C.UTF-8 DISPLAY=:1)
+CONF=("${BARE[@]}" bash -c '. /etc/profile.d/pac-ca.sh; exec "$@"' _)
+conf_env() { "${CONF[@]}" "$@"; }
 
 # Verdict from a command's combined output: tls-ok (real server answered), tls-fail, or other.
 classify() {
@@ -35,8 +37,8 @@ classify() {
 run() {  # run <name> <command...> : both passes, one TSV line each
   local name=$1; shift
   for mode in bare configured; do
-    local fn=conf_env; [ "$mode" = bare ] && fn=bare_env
-    local out; out=$(timeout 120 $fn "$@" 2>&1 | tail -c 600 | tr '\n\t' '  ')
+    local pre=("${CONF[@]}"); [ "$mode" = bare ] && pre=("${BARE[@]}")
+    local out; out=$(timeout 120 "${pre[@]}" "$@" 2>&1 | tail -c 600 | tr '\n\t' '  ')
     printf '%s\t%s\t%s\t%s\n' "$name" "$mode" "$(classify "$out")" "${out:0:300}" | tee -a "$OUT"
   done
 }
@@ -45,7 +47,7 @@ run() {  # run <name> <command...> : both passes, one TSV line each
 printf 'client\tmode\tverdict\toutput\n' >> "$OUT"
 
 # Set up clients that need installing (through the proxy, configured mode, so installs succeed).
-conf_env uv venv -q "$VENV" && conf_env uv pip install -q --python "$VENV/bin/python" requests httpx pip >/dev/null 2>&1
+conf_env uv venv -q --clear "$VENV" && conf_env uv pip install -q --python "$VENV/bin/python" requests httpx pip >/dev/null 2>&1
 command -v codex >/dev/null || conf_env npm install -g --prefix "$HOME/.local" @openai/codex >/dev/null 2>&1
 command -v claude >/dev/null || conf_env npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code >/dev/null 2>&1
 
@@ -67,7 +69,7 @@ run claude-code     env ANTHROPIC_API_KEY=$PH_ANTHROPIC claude -p "Reply with th
 # the reply, so the client must see its own placeholder come back.
 echo_check() {
   local name=$1; shift
-  local out; out=$(timeout 60 conf_env "$@" 2>&1 | tr '\n\t' '  ')
+  local out; out=$(timeout 60 "${CONF[@]}" "$@" 2>&1 | tr '\n\t' '  ')
   local v=other; grep -q "$PH_ECHO" <<<"$out" && v=swap-roundtrip-ok
   printf '%s\t%s\t%s\t%s\n' "$name" echo "$v" "${out:0:300}" | tee -a "$OUT"
 }
