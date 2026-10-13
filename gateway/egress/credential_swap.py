@@ -129,17 +129,32 @@ class Policy:
 class CredentialSwap:
     def __init__(self) -> None:
         self.policy = Policy()
+        self.mtime = 0.0
 
     def load(self, loader) -> None:
         loader.add_option("pac_policy", str, "/etc/pac/egress-policy.json", "Path to the PAC egress policy")
 
     def configure(self, updated) -> None:
         if "pac_policy" in updated:
-            self.policy = Policy.load(ctx.options.pac_policy)
-            ctx.log.info(f"pac: policy loaded, {len(self.policy.secrets)} secret(s)")
+            self._load()
+
+    def _load(self) -> None:
+        path = ctx.options.pac_policy
+        self.mtime = os.stat(path).st_mtime
+        self.policy = Policy.load(path)
+        ctx.log.info(f"pac: policy loaded, {len(self.policy.secrets)} secret(s)")
+
+    def _maybe_reload(self) -> None:
+        # The gateway rewrites the policy whenever agents come and go; pick it up without a restart.
+        try:
+            if os.stat(ctx.options.pac_policy).st_mtime != self.mtime:
+                self._load()
+        except (OSError, ValueError) as e:
+            ctx.log.warn(f"pac: policy reload failed, keeping the previous one: {e}")
 
     # -- network layer: never connect to internal addresses --------------------------------
     def server_connect(self, data: server_hooks.ServerConnectionHookData) -> None:
+        self._maybe_reload()
         if data.server.address is None:
             return
         host, port = data.server.address
@@ -165,6 +180,7 @@ class CredentialSwap:
             self._block(flow, reason)
 
     def request(self, flow: http.HTTPFlow) -> None:
+        self._maybe_reload()
         req = flow.request
         host = (req.host_header or req.pretty_host or "").split(":")[0].lower()
         sni = (flow.client_conn.sni or "").lower()
@@ -195,9 +211,14 @@ class CredentialSwap:
     def response(self, flow: http.HTTPFlow) -> None:
         resp = flow.response
         if resp is not None and not flow.metadata.get("pac_blocked"):
-            for s in self.policy.secrets:
-                if s.value and self._contains(resp, s.value):
-                    self._replace(resp, s.value, s.placeholder)
+            client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else ""
+            # Several agents can share one real secret. Put back this client's own placeholder, and never
+            # hand one agent another agent's placeholder: anything else is redacted outright.
+            ordered = sorted((s for s in self.policy.secrets if s.value), key=lambda s: not s.usable_by(client_ip))
+            for s in ordered:
+                if self._contains(resp, s.value):
+                    mask = s.placeholder if s.usable_by(client_ip) else "[redacted by pac]"
+                    self._replace(resp, s.value, mask)
                     flow.metadata.setdefault("pac_scrubbed", []).append(s.name)
         self._audit(flow)
 

@@ -93,6 +93,30 @@ class AnthropicAdapter(unittest.TestCase):
         self.assertEqual(results[2]["content"], ant.NOT_EXECUTED)
         self.assertEqual([op for op, _ in c.calls], ["move"])
 
+    def test_connector_tool_alongside_computer_actions(self):
+        c = FakeComputer()
+        calls = []
+        agent = ant.AnthropicComputerAgent(api_key="x", log=lambda *_: None,
+                                           tools=[{"name": "notes__add", "description": "d",
+                                                   "input_schema": {"type": "object"}}],
+                                           call_tool=lambda n, a: calls.append((n, a)) or "saved")
+        turns = [
+            {"stop_reason": "tool_use", "content": [
+                {"type": "tool_use", "id": "toolu_n", "name": "notes__add", "input": {"text": "hi"}},
+                tool_use(2, "type", {"text": "x"}),
+            ]},
+            {"stop_reason": "end_turn", "content": [{"type": "text", "text": "ok"}]},
+        ]
+        with mock.patch.object(ant, "post_json", side_effect=turns) as post:
+            agent.run("task", c)
+        self.assertEqual(calls, [("notes__add", {"text": "hi"})])
+        body = post.call_args_list[0].args[2]
+        self.assertEqual(body["tools"][1]["name"], "notes__add")
+        results = post.call_args_list[1].args[2]["messages"][2]["content"]
+        self.assertEqual(results[0], {"type": "tool_result", "tool_use_id": "toolu_n", "content": "saved"})
+        self.assertEqual(results[1]["toolset_name"], "computer")
+        self.assertEqual(results[1]["content"][-1]["type"], "image")  # trailing screenshot on the computer result
+
 
 class OpenAIAdapter(unittest.TestCase):
     def test_batched_actions_and_stateless_replay(self):
@@ -154,6 +178,23 @@ class OpenAIAdapter(unittest.TestCase):
         out = body["input"][2]
         self.assertEqual((out["type"], out["call_id"]), ("function_call_output", "fc_1"))
         self.assertEqual(out["output"][1]["type"], "input_image")
+
+    def test_connector_function_call(self):
+        c = FakeComputer()
+        turns = [
+            {"status": "completed", "output": [{"type": "function_call", "name": "notes__list", "call_id": "fc_2",
+                                                "arguments": "{}"}]},
+            {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]},
+        ]
+        agent = oai.OpenAIComputerAgent(api_key="x", log=lambda *_: None, tool_mode="function",
+                                        tools=[{"name": "notes__list", "input_schema": {"type": "object"}}],
+                                        call_tool=lambda n, a: "[]")
+        with mock.patch.object(oai, "post_json", side_effect=turns) as post:
+            agent.run("task", c)
+        body = post.call_args_list[1].args[2]
+        self.assertEqual([t["name"] for t in body["tools"]], ["computer", "notes__list"])
+        self.assertEqual(body["input"][2], {"type": "function_call_output", "call_id": "fc_2", "output": "[]"})
+        self.assertEqual(c.calls, [])  # no computer action, no screenshot
 
 
 if __name__ == "__main__":

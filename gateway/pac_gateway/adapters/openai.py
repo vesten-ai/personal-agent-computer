@@ -126,10 +126,12 @@ def describe(a: dict) -> str:
 class OpenAIComputerAgent:
     def __init__(self, model: str = "gpt-6.1-sol", effort: str = "medium", api_key: str | None = None,
                  system: str = "", log=print, tool_mode: str = "native", on_event=None, should_stop=None,
-                 base_url: str | None = None):
+                 base_url: str | None = None, tools: list[dict] | None = None, call_tool=None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
         self.on_event, self.should_stop = on_event, should_stop
         self.tool_mode = tool_mode
+        # Extra tools (connectors): [{"name", "description", "input_schema"}], run by call_tool(name, args) -> str.
+        self.extra_tools, self.call_tool = tools or [], call_tool
         self.api = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/") + "/responses"
         self.cache_key = f"pac-{os.getpid()}-{int(time.time())}"
         self.api_key = api_key or os.environ["OPENAI_API_KEY"]
@@ -151,7 +153,10 @@ class OpenAIComputerAgent:
     def _request(self) -> dict:
         body = {
             "model": self.model,
-            "tools": [{"type": "computer"}] if self.tool_mode == "native" else [FUNCTION_TOOL],
+            "tools": ([{"type": "computer"}] if self.tool_mode == "native" else [FUNCTION_TOOL])
+            + [{"type": "function", "name": t["name"], "description": t.get("description", ""),
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}}}
+               for t in self.extra_tools],
             "input": self.items,
             "store": False,
             "include": ["reasoning.encrypted_content"],
@@ -190,13 +195,23 @@ class OpenAIComputerAgent:
                             self._emit("text", c["text"])
             calls = [o for o in output if o["type"] == "computer_call"
                      or (o["type"] == "function_call" and o.get("name") == "computer")]
-            if not calls:
+            tool_calls = [o for o in output if o["type"] == "function_call" and o.get("name") != "computer"]
+            if not calls and not tool_calls:
                 final = "".join(c.get("text", "") for o in output if o["type"] == "message"
                                 for c in o.get("content") or [] if c.get("type") == "output_text")
                 return {"stop_reason": resp.get("status"), "final": final, "steps": steps, "usage": self.usage,
                         "model_used": resp.get("model")}
             t1 = time.time()
             actions = []
+            for call in tool_calls:
+                try:
+                    args = json.loads(call.get("arguments") or "{}")
+                    out = self.call_tool(call["name"], args) if self.call_tool else "error: no such tool"
+                    actions.append(f"{call['name']} {json.dumps(args, ensure_ascii=False)[:200]}")
+                except Exception as e:
+                    out = f"error: {e}"
+                    actions.append(f"{call['name']} failed: {e}")
+                self.items.append({"type": "function_call_output", "call_id": call["call_id"], "output": str(out)})
             for call in calls:
                 if call["type"] == "function_call":
                     try:

@@ -25,6 +25,9 @@ class Store:
                   id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, ts REAL NOT NULL,
                   kind TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id, id);
+                CREATE TABLE IF NOT EXISTS placeholders (
+                  agent_id TEXT NOT NULL, secret TEXT NOT NULL, value TEXT NOT NULL,
+                  PRIMARY KEY (agent_id, secret));
             """)
 
     # -- agents --------------------------------------------------------------------------------
@@ -55,8 +58,22 @@ class Store:
     def delete_agent(self, aid: str) -> None:
         with self.lock:
             self.db.execute("DELETE FROM events WHERE agent_id = ?", (aid,))
+            self.db.execute("DELETE FROM placeholders WHERE agent_id = ?", (aid,))
             self.db.execute("DELETE FROM agents WHERE id = ?", (aid,))
             self.db.commit()
+
+    # -- placeholders ----------------------------------------------------------------------------
+    def placeholder(self, aid: str, secret: str, make) -> str:
+        """The agent's placeholder for a secret, created once and stable afterwards."""
+        with self.lock:
+            r = self.db.execute("SELECT value FROM placeholders WHERE agent_id = ? AND secret = ?",
+                                (aid, secret)).fetchone()
+            if r:
+                return r["value"]
+            value = make()
+            self.db.execute("INSERT INTO placeholders VALUES (?, ?, ?)", (aid, secret, value))
+            self.db.commit()
+            return value
 
     # -- transcript ----------------------------------------------------------------------------
     def add_event(self, aid: str, kind: str, data) -> dict:

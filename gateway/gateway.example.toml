@@ -7,6 +7,9 @@ listen_port = 8000
 admin_token_env = "PAC_ADMIN_TOKEN"
 # The egress proxy's CA; new agent VMs are told to trust it at first boot.
 egress_ca_file = "/var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem"
+# The proxy's policy, rewritten by the gateway whenever agents change, and the allow/deny lists it starts from.
+egress_policy_file = "/etc/pac/egress-policy.json"
+egress_base_policy = "/etc/pac/egress-base.json"
 default_model = "gpt"
 max_steps = 60
 
@@ -34,3 +37,21 @@ tool_mode = "native"
 api = "anthropic"
 model = "claude-opus-5-5"
 key_env = "PAC_MODEL_CLAUDE_KEY"
+
+# Credentials the agents may use but never hold. The real value lives only in the egress proxy's
+# environment (/etc/pac/secrets.env, variable `value_env`). Each agent's VM gets its own placeholder in
+# `vm_env`, and the proxy swaps it for the real value only on HTTPS requests to `hosts` that come from
+# that agent's VM. The policy file is rewritten whenever agents are added or removed.
+
+# [secrets.github]
+# value_env = "PAC_SECRET_GITHUB"
+# vm_env = "GH_TOKEN"
+# hosts = ["api.github.com", "github.com"]
+# prefix = "ghp_"          # shape the placeholder like the real thing, for clients that check
+
+# Connectors: MCP servers the gateway runs outside the VMs. The model sees their tools as
+# `<connector>__<tool>`. Credentials for them come from the gateway's environment, never the VM.
+[connectors.notes]
+command = ["/opt/pac/gateway-venv/bin/python", "-m", "pac_gateway.connectors.notes"]
+env = { NOTES_FILE = "/var/lib/pac/notes.json" }
+# secret_env = { SOME_TOKEN = "PAC_CONNECTOR_SOME_TOKEN" }
