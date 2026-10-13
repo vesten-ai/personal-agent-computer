@@ -10,6 +10,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 AGENT_NET=${PAC_AGENT_NET:-10.96.10.0/24}
+GW_IP=${PAC_GW_IP:-10.96.10.2}   # DNS binds here: systemd-resolved already holds 127.0.0.53:53
 MITM_VERSION=12.2.3
 
 apt-get update -qq
@@ -61,7 +62,7 @@ ExecStart=/usr/sbin/nft -f /etc/pac/egress-container.nft
 [Install]
 WantedBy=multi-user.target
 UNIT
-cat > /etc/systemd/system/pac-egress.service <<'UNIT'
+cat > /etc/systemd/system/pac-egress.service <<UNIT
 [Unit]
 Description=PAC gateway: egress proxy (placeholder -> credential swap)
 After=network-online.target pac-egress-fw.service
@@ -71,7 +72,7 @@ User=pac-egress
 EnvironmentFile=/etc/pac/secrets.env
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 ExecStart=/usr/local/bin/mitmdump --set confdir=/var/lib/pac-egress/mitm \
-  --mode transparent@8081 --mode regular@8080 --mode dns@53 \
+  --mode transparent@8081 --mode regular@8080 --mode dns@$GW_IP:53 \
   --set block_global=false --set connection_strategy=lazy \
   -s /opt/pac/egress/credential_swap.py --set pac_policy=/etc/pac/egress-policy.json
 Restart=always

@@ -1,0 +1,12 @@
+{
+  "default": "allow",
+  "deny_hosts": [],
+  "deny_networks": [],
+  "audit_log": "/var/log/pac/egress.jsonl",
+  "secrets": [
+    {"name": "echo", "placeholder": "sk-pac-echo-placeholder-0001", "env": "PAC_SECRET_ECHO", "hosts": ["postman-echo.com"]},
+    {"name": "openai", "placeholder": "sk-pac-openai-placeholder-0001", "env": "PAC_SECRET_OPENAI", "hosts": ["api.openai.com"]},
+    {"name": "anthropic", "placeholder": "sk-ant-pac-anthropic-placeholder-0001", "env": "PAC_SECRET_ANTHROPIC", "hosts": ["api.anthropic.com"]},
+    {"name": "github", "placeholder": "ghp_pacGithubPlaceholder000000000000001", "env": "PAC_SECRET_GITHUB", "hosts": ["api.github.com", "github.com"]}
+  ]
+}
