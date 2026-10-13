@@ -5,6 +5,7 @@
 # Agent VMs use this container as default gateway and DNS server (DHCP options on pac-br0), so:
 #   tcp 80/443 from the agent subnet  -> mitmproxy transparent mode (:8081)
 #   dns to any address                -> mitmproxy dns mode (:53)
+#   ntp to any address                -> chronyd here, serving the host's clock
 #   explicit proxy                    -> mitmproxy regular mode (:8080), for clients that want HTTPS_PROXY
 #   everything else from a VM         -> dropped (no IP forwarding, input policy drop)
 set -euo pipefail
@@ -14,7 +15,7 @@ GW_IP=${PAC_GW_IP:-10.96.10.2}   # DNS binds here: systemd-resolved already hold
 MITM_VERSION=12.2.3
 
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends ca-certificates curl nftables python3 >/dev/null
+apt-get install -y -qq --no-install-recommends ca-certificates curl nftables python3 chrony >/dev/null
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh >/dev/null
 UV_TOOL_DIR=/opt/pac/tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --quiet "mitmproxy==$MITM_VERSION"
 
@@ -35,11 +36,12 @@ table inet pac_gw {
     ip saddr $AGENT_NET tcp dport { 80, 443 } redirect to :8081
     ip saddr $AGENT_NET udp dport 53 redirect to :53
     ip saddr $AGENT_NET tcp dport 53 redirect to :53
+    ip saddr $AGENT_NET udp dport 123 redirect to :123
   }
   chain input {
     type filter hook input priority filter; policy accept;
     ip saddr $AGENT_NET tcp dport { 53, 8080, 8081 } accept
-    ip saddr $AGENT_NET udp dport 53 accept
+    ip saddr $AGENT_NET udp dport { 53, 123 } accept
     ip saddr $AGENT_NET icmp type echo-request accept
     ip saddr $AGENT_NET ct state established,related accept
     ip saddr $AGENT_NET drop
@@ -50,6 +52,22 @@ table inet pac_gw {
 }
 NFT
 nft -f /etc/pac/egress-container.nft
+
+# Time for the VMs. A container can't set the clock, so chronyd runs with -x (don't touch it) and serves
+# the system clock, which is the host's, as a local reference. Without this, a VM that was paused or
+# restored keeps a clock that is behind by however long it slept.
+cat > /etc/chrony/chrony.conf <<CONF
+# Personal Agent Computer gateway: serve the host's clock to the agent VMs.
+local stratum 10
+allow $AGENT_NET
+driftfile /var/lib/chrony/chrony.drift
+CONF
+echo 'DAEMON_OPTS="-x"' > /etc/default/chrony
+mkdir -p /etc/systemd/system/chrony.service.d
+printf '[Unit]\nConditionCapability=\n' > /etc/systemd/system/chrony.service.d/pac.conf
+systemctl daemon-reload
+systemctl enable chrony.service >/dev/null 2>&1
+systemctl restart chrony.service
 
 cat > /etc/systemd/system/pac-egress-fw.service <<'UNIT'
 [Unit]
@@ -82,5 +100,5 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now pac-egress-fw.service pac-egress.service >/dev/null 2>&1
 systemctl restart pac-egress.service
-for i in $(seq 1 30); do [ -s /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
+for _ in $(seq 1 30); do [ -s /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
 echo "egress proxy up; CA at /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem"

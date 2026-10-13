@@ -11,6 +11,7 @@ egress = ["mitmproxy==12.2.3"]
 
 [project.scripts]
 pac-gateway = "pac_gateway.server:main"
+pac = "pac_gateway.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["pac_gateway*"]

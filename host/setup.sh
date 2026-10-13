@@ -7,7 +7,7 @@
 #   - bridge pac-build (image builds; plain NAT, no agent ever runs here)
 #   - nftables table inet pac_egress, which enforces the pac-br0 rule on the host
 #
-# Agent VMs get the gateway as their default route and DNS server via DHCP, and their
+# Agent VMs get the gateway as their default route, DNS and NTP server via DHCP, and their
 # NICs have port isolation plus IP/MAC filtering, so they can't talk to each other or
 # pose as the gateway.
 set -euo pipefail
@@ -25,9 +25,10 @@ if ! incus network show pac-br0 >/dev/null 2>&1; then
   incus network create pac-br0 --project default \
     ipv4.address="$SUBNET.1/24" ipv4.nat=true ipv6.address=none \
     ipv4.dhcp.ranges="$SUBNET.100-$SUBNET.199" \
-    ipv4.dhcp.gateway="$GW_IP" \
-    raw.dnsmasq="dhcp-option=option:dns-server,$GW_IP"
+    ipv4.dhcp.gateway="$GW_IP"
 fi
+incus network set pac-br0 --project default raw.dnsmasq="dhcp-option=option:dns-server,$GW_IP
+dhcp-option=option:ntp-server,$GW_IP"
 if ! incus network show pac-build >/dev/null 2>&1; then
   incus network create pac-build --project default \
     ipv4.address="$BUILD_SUBNET.1/24" ipv4.nat=true ipv6.address=none
@@ -50,6 +51,15 @@ devices:
     security.mac_filtering: "true"
     security.ipv4_filtering: "true"
 YAML
+# Free page reporting: memory a guest frees goes back to the host within seconds. Incus 6.0 attaches the
+# balloon without it, so set it in the balloon's section of the generated QEMU config.
+FPR='[device "qemu_balloon"]
+free-page-reporting = "on"'
+if [ "$(incus profile get default raw.qemu.conf --project pac)" != "$FPR" ]; then
+  # Incus saves the change but reports running VMs it can't update live; they get it at their next boot.
+  incus profile set default --project pac raw.qemu.conf="$FPR" 2>/dev/null || true
+  [ "$(incus profile get default raw.qemu.conf --project pac)" = "$FPR" ] || { echo "setting raw.qemu.conf failed" >&2; exit 1; }
+fi
 incus profile show gateway --project pac >/dev/null 2>&1 || incus profile create gateway --project pac
 # The DHCP options above point every client at the gateway, so the gateway itself gets a
 # static configuration that routes through the host bridge instead.

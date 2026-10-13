@@ -58,3 +58,39 @@ VM's memory.
 2. Idle longer: **stateful stop** if the agent has open work worth keeping, otherwise **cold stop**.
 3. Wake on new message: start, then wait for pac-computerd to answer (7-16 s depending on the path);
    the chat page should say "waking the computer" during that time.
+
+## Follow-up: free page reporting, memory after a restore, and the guest clock
+
+Run 2026-10-13 on factory1 with `FPR=1 measure.sh 3` (log: `/root/spike4-fpr.log` on the host), then
+by hand on the running VMs.
+
+**Free page reporting works once switched on, but barely moves the idle number.** With
+`raw.qemu.conf` setting `free-page-reporting = "on"` in the balloon's section, the guest negotiates the
+feature and an idle desktop costs 1366 MiB of host memory instead of 1442. Dropping the guest's page
+cache changes little (1341 MiB), because almost all of what a freshly booted desktop has touched is
+still in use. Where it pays off is after work: a guest that allocates and frees 1.5 GiB goes back from
+2306 to 820 MiB on the host within 15 s with reporting on, and stays at 2397 MiB without it.
+
+**It does not fix the restore.** A VM restored from a stateful stop still holds its whole 4 GiB limit,
+minutes later too: the restore writes every page, and the guest has already reported those pages once,
+so it never reports them again. What does work is cycling the balloon after the wake: lower
+`limits.memory` to a little above what the guest uses, then set it back. That took a restored desktop
+from 4159 to 2111 MiB in about 5 s, with Chromium still running. If the guest can't free memory fast
+enough, Incus gives up on the lower limit and leaves the balloon part way, and setting the old limit
+again does nothing because it is still the stored value. Going through one MiB less fixes that.
+
+**A paused or restored guest's clock is behind by the time it slept.** The VMs can't reach any NTP
+server (only the gateway leaves the bridge), so nothing corrected it: 3.5 min behind after a 3.5 min
+pause, 2 min after a 2 min stateful stop.
+
+What v1 does now:
+
+- `host/setup.sh` turns on free page reporting in the `default` profile.
+- The gateway runs chronyd serving the host's clock. NTP from the VMs is redirected to it, and DHCP
+  names it as the NTP server.
+- On every wake the gateway also sets the guest's clock directly, so it is right before the agent's
+  first step.
+- The second sleep stage is a stateful stop (`idle_stop_stateful = true`). After a restore the gateway
+  cycles the balloon. If a restore fails, the VM boots fresh with `incus start --stateless`.
+- Measured through the gateway: a stateful sleep takes 23 s. The wake takes 11 s and brings back the
+  same windows; the clock is right, and host memory settles at 1.9 GiB.

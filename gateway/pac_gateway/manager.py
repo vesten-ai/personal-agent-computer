@@ -7,6 +7,7 @@ remote host with a client certificate restricted to one project.
 """
 
 import json
+import re
 import shlex
 import subprocess
 import time
@@ -22,6 +23,16 @@ class ComputerInfo:
     name: str
     state: str            # Running, Stopped, Frozen, Missing
     address: str | None
+    saved: bool = False   # stopped with its memory saved: the next start restores the session
+
+
+def mib(size: str) -> int:
+    """'4GiB' -> 4096."""
+    m = re.fullmatch(r"(\d+)\s*(MiB|GiB|MB|GB)", size.strip())
+    if not m:
+        raise ValueError(f"can't read memory size {size!r}")
+    n, unit = int(m[1]), m[2]
+    return n * {"MiB": 1, "GiB": 1024, "MB": 1, "GB": 1000}[unit]
 
 
 class IncusManager:
@@ -65,7 +76,7 @@ class IncusManager:
                 for a in nic.get("addresses", []):
                     if a["family"] == "inet" and a["scope"] == "global":
                         addr = a["address"]
-            return ComputerInfo(name, inst["status"], addr)
+            return ComputerInfo(name, inst["status"], addr, bool(inst.get("stateful")))
         return ComputerInfo(name, "Missing", None)
 
     def create(self, name: str, ca_pem: str, files: list[dict] | None = None,
@@ -99,10 +110,22 @@ class IncusManager:
             time.sleep(2)
         raise ManagerError(f"{name} did not become ready within {timeout:.0f}s")
 
-    def start(self, name: str) -> None:
-        state = self.info(name).state
-        if state in ("Frozen", "Stopped"):  # `incus start` also resumes a paused VM
+    def start(self, name: str) -> str:
+        """Start, resume or restore the VM. Returns how: running, resumed, restored or booted."""
+        info = self.info(name)
+        if info.state == "Frozen":  # `incus start` also resumes a paused VM
             self._run("start", self._target(name))
+            return "resumed"
+        if info.state != "Stopped":
+            return "running"
+        try:
+            self._run("start", self._target(name))
+            return "restored" if info.saved else "booted"
+        except ManagerError:
+            if not info.saved:
+                raise
+            self._run("start", self._target(name), "--stateless")  # the saved session is unusable
+            return "booted"
 
     def pause(self, name: str) -> None:
         if self.info(name).state == "Running":
@@ -120,6 +143,37 @@ class IncusManager:
             if stateful:
                 raise
             self._run("stop", self._target(name), "--force")
+
+    def sync_clock(self, name: str) -> None:
+        """Set the guest's clock from ours. A paused or restored VM's clock is behind by however long it
+        slept; NTP from the gateway would also fix it, but only at its next poll."""
+        cmd = self.exec_argv(name, "date", "-u", "-s", f"@{time.time():.3f}", user=None)
+        subprocess.run(cmd, capture_output=True, timeout=30)
+
+    def reclaim_memory(self, name: str) -> None:
+        """Hand memory back to the host after a restore.
+
+        Restoring a saved VM writes every page of its memory, and free page reporting won't report those
+        pages again, so the VM would hold its whole limit. Shrinking the balloon to a little above what
+        the guest uses and growing it back returns the rest to the host."""
+        out = subprocess.run(self.exec_argv(name, "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches; "
+                                            "awk '/^MemTotal|^MemAvailable/{print $2}' /proc/meminfo", user=None),
+                             capture_output=True, text=True, timeout=60).stdout.split()
+        if len(out) != 2:
+            return
+        used = (int(out[0]) - int(out[1])) // 1024
+        limit = mib(self.memory)
+        target = max(1024, -(-(used + 768) // 256) * 256)
+        if target >= limit:
+            return
+        try:
+            self._run("config", "set", self._target(name), f"limits.memory={target}MiB", timeout=120)
+        except ManagerError:
+            pass  # the guest couldn't give that much back in time; what it gave is still returned
+        # Grow back. After a failed shrink the stored limit is unchanged and setting it again would do
+        # nothing, so go through one MiB less.
+        self._run("config", "set", self._target(name), f"limits.memory={limit - 1}MiB")
+        self._run("config", "set", self._target(name), f"limits.memory={self.memory}")
 
     def delete(self, name: str) -> None:
         if self.info(name).state != "Missing":
