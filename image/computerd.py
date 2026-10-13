@@ -141,12 +141,14 @@ def op_type(a):
     if text.isascii():
         xdo("type", "--delay", 8, "--", text)
     else:
-        # xdotool's keysym remapping drops or reorders CJK characters in some toolkits;
-        # paste through the clipboard instead (the agent owns the clipboard).
+        # xdotool's keysym remapping drops or reorders CJK characters in some toolkits, so paste
+        # instead. Ctrl+V isn't paste in terminals, and Shift+Insert pastes PRIMARY in some apps and
+        # CLIPBOARD in others: put the text in both, then Shift+Insert works everywhere we tried.
         # xclip stays behind to serve the selection; give it no pipes to hold open.
-        subprocess.run(["xclip", "-selection", "clipboard", "-in"], input=text.encode(), env=ENV,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=True)
-        xdo("key", "--clearmodifiers", "ctrl+v")
+        for selection in ("clipboard", "primary"):
+            subprocess.run(["xclip", "-selection", selection, "-in"], input=text.encode(), env=ENV,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=True)
+        xdo("key", "--clearmodifiers", "shift+Insert")
 
 
 def op_key(a):

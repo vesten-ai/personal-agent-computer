@@ -4,10 +4,16 @@ version = "0.0.0"
 description = "Personal Agent Computer gateway: agent loop, model adapters, egress policy"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-dependencies = []
+dependencies = ["starlette>=1.0", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
 
 [project.optional-dependencies]
 egress = ["mitmproxy==12.2.3"]
 
+[project.scripts]
+pac-gateway = "pac_gateway.server:main"
+
 [tool.setuptools.packages.find]
 include = ["pac_gateway*"]
+
+[tool.setuptools.package-data]
+pac_gateway = ["static/*"]

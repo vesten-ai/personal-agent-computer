@@ -17,11 +17,11 @@ incus launch images:ubuntu/24.04/cloud "$VM" "${P[@]}" --vm --profile build \
 for _ in $(seq 1 150); do incus exec "${P[@]}" "$VM" -- test -e /run/systemd/system 2>/dev/null && break; sleep 2; done
 incus exec "${P[@]}" "$VM" -- cloud-init status --wait >/dev/null 2>&1 || true
 
-incus file push "${P[@]}" "$HERE/provision.sh" "$HERE/computerd.py" "$VM/root/"
+incus file push "${P[@]}" "$HERE/provision.sh" "$HERE/computerd.py" "$HERE/trust-gateway-ca.sh" "$VM/root/"
 time incus exec "${P[@]}" "$VM" -- bash /root/provision.sh
 
 # Seal: each VM made from the image gets its own machine-id and runs cloud-init afresh.
-incus exec "${P[@]}" "$VM" -- sh -c 'rm -f /root/provision.sh /root/computerd.py; cloud-init clean --logs; truncate -s0 /etc/machine-id; rm -f /var/lib/dbus/machine-id; fstrim -av >/dev/null 2>&1 || true'
+incus exec "${P[@]}" "$VM" -- sh -c 'rm -f /root/provision.sh /root/computerd.py /root/trust-gateway-ca.sh; cloud-init clean --logs; truncate -s0 /etc/machine-id; rm -f /var/lib/dbus/machine-id; fstrim -av >/dev/null 2>&1 || true'
 incus stop "${P[@]}" "$VM"
 incus image delete "$ALIAS" >/dev/null 2>&1 || true
 time incus publish "${P[@]}" "$VM" --alias "$ALIAS" --compression zstd \
