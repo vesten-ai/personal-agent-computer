@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Spike 4: memory per desktop VM, cold boot / stateful wake / pause times, and how many fit on a host.
-# Run as root on the Incus host after host/setup-spike-host.sh, image/build.sh and the gateway.
+# Run as root on the Incus host after host/setup.sh, image/build.sh and the gateway.
 #
 #   spikes/04-density/measure.sh [count] [memory] [cpus]      defaults: 3 4GiB 2
 #

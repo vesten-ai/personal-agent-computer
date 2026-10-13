@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Let the gateway container drive agent VMs through the Incus API, and nothing else on the host.
-# Run as root on the Incus host after host/setup-spike-host.sh. Prints a one-time join token for
+# Run as root on the Incus host after host/setup.sh. Prints a one-time join token for
 # gateway/deploy/gateway-container.sh.
 #
 # - The API listens on the agent bridge address only. Agent VMs can't reach it: the host's

@@ -49,6 +49,10 @@ class Config:
     models: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
     max_steps: int = 60
+    # Idle agents sleep: their VM is paused (instant resume, memory kept), later stopped (no memory used;
+    # a cold boot takes ~10 s). A new message wakes them. 0 turns a stage off.
+    idle_pause_minutes: float = 10
+    idle_stop_minutes: float = 120
 
     @property
     def admin_token(self) -> str:

@@ -196,6 +196,29 @@ class OpenAIAdapter(unittest.TestCase):
         self.assertEqual(body["input"][2], {"type": "function_call_output", "call_id": "fc_2", "output": "[]"})
         self.assertEqual(c.calls, [])  # no computer action, no screenshot
 
+    def test_safety_check_goes_to_the_person(self):
+        flagged = {"type": "computer_call", "call_id": "c1", "status": "completed",
+                   "pending_safety_checks": [{"id": "sc1", "code": "malicious_instructions", "message": "odd page"}],
+                   "actions": [{"type": "click", "button": "left", "x": 1, "y": 1}]}
+        done = {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]}
+        for allow in (False, True):
+            c, asked = FakeComputer(), []
+            agent = oai.OpenAIComputerAgent(api_key="x", log=lambda *_: None,
+                                            confirm=lambda q: asked.append(q) or allow)
+            with mock.patch.object(oai, "post_json", side_effect=[{"status": "completed", "output": [flagged]}, done]) as post:
+                agent.run("task", c)
+            self.assertIn("odd page", asked[0])
+            second = post.call_args_list[1].args[2]["input"]
+            if allow:
+                self.assertEqual(c.calls[0][0], "click")
+                cco = next(i for i in second if i.get("type") == "computer_call_output")
+                self.assertEqual(cco["acknowledged_safety_checks"][0]["id"], "sc1")
+            else:
+                self.assertEqual(c.calls, [])  # nothing ran
+                self.assertNotIn(flagged, second)  # the unanswered call was dropped, never sent back
+                users = [i["content"][0]["text"] for i in second if i.get("role") == "user"]
+                self.assertIn("did not allow", users[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

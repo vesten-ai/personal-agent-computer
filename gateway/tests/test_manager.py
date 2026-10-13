@@ -31,6 +31,12 @@ class Argv(unittest.TestCase):
         m.create("pac-x", "CA")
         self.assertEqual(seen[0][:3], ("launch", "host:pac-desktop/dev", "host:pac-x"))
 
+    def test_info_of_a_stopped_vm(self):
+        m = IncusManager(project="pac")
+        m._run = lambda *a, **k: '[{"name": "pac-x", "status": "Stopped", "state": {"network": null}}]'
+        info = m.info("pac-x")
+        self.assertEqual((info.state, info.address), ("Stopped", None))
+
 
 if __name__ == "__main__":
     unittest.main()

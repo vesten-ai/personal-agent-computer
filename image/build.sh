@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the desktop image on an Incus host. Run as root on the host from a checkout of this repo,
-# after host/setup-spike-host.sh.
+# after host/setup.sh.
 #
 #   image/build.sh [alias]      default alias: pac-desktop/dev
 set -euo pipefail

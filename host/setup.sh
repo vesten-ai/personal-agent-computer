@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare an Incus host for Personal Agent Computer spikes. Run as root on the host.
+# Prepare an Incus host for Personal Agent Computer. Run as root on the host (install.sh calls it).
 #
 # Creates, all idempotently:
 #   - Incus project "pac" (own profiles and volumes, shares the host's images and networks)

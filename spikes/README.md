@@ -22,7 +22,7 @@ Incus host
 └── pac-build (10.96.11.0/24) image builds only, plain NAT
 ```
 
-Set-up order: `host/setup-spike-host.sh` on the host, build the image (`image/provision.sh`),
+Set-up order: `host/setup.sh` on the host, build the image (`image/provision.sh`),
 start the gateway container (`gateway/deploy/egress-container.sh`), launch agent VMs and run
 `image/trust-gateway-ca.sh` in each, then the spikes.
 
