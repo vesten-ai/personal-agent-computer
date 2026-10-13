@@ -1,0 +1,27 @@
+== baseline: the sanctioned path works
+ok       default route is the gateway (open)
+ok       DNS through the gateway (open)
+ok       HTTPS through the gateway (transparent proxy) (open)
+== bypass attempts
+ok       TCP to a public IP on a non-web port (1.1.1.1:22) (blocked)
+ok       TCP to DNS-over-TLS (1.1.1.1:853) (blocked)
+ok       ICMP to a public IP (blocked)
+ok       IPv6 to the internet (blocked)
+ok       host bridge address, SSH (blocked)
+ok       host bridge address, Incus API (blocked)
+ok       host bridge address, DNS (host's dnsmasq) (blocked)
+ok       host public address, SSH (blocked)
+ok       host public address, HTTPS (via proxy) (blocked)
+ok       cloud metadata address (blocked)
+ok       gateway, a port that is not the proxy (22) (blocked)
+ok       another agent VM (ICMP) (blocked)
+ok       another agent VM (TCP 5900) (blocked)
+== root-level bypass attempts
+ok       default route via the host bridge, then HTTPS by IP (blocked)
+ok       default route via the host bridge, then TCP 1.1.1.1:443 (blocked)
+ok       spoof the gateway's IP and route via the host (blocked)
+ok       spoofed MAC address, HTTPS (blocked)
+ok       back to normal after restoring address and route (open)
+== known gaps (reported, not failures)
+note     the gateway resolves any name for the VM, so DNS queries can carry data out unless its resolver is restricted
+note     /dev/incus/sock (Incus guest API) is present: never put secrets in instance config or user.* keys

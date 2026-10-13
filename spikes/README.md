@@ -5,10 +5,10 @@ question and records what it found next to its script.
 
 | # | Question | Script | Status |
 |---|----------|--------|--------|
-| 1 | Which programs in the VM work through the gateway's TLS interception, and does the placeholder → credential swap reach the real API? (Chromium, Node, Python, Codex, Claude Code, gh, git, uv, pip, npm) | [`01-tls-swap/check.sh`](01-tls-swap/check.sh) | written |
-| 2 | Can an agent VM on Incus get out without going through the gateway, even as root? | [`02-forced-egress/check.sh`](02-forced-egress/check.sh) | written |
+| 1 | Which programs in the VM work through the gateway's TLS interception, and does the placeholder → credential swap reach the real API? (Chromium, Node, Python, Codex, Claude Code, gh, git, uv, pip, npm) | [`01-tls-swap/check.sh`](01-tls-swap/check.sh) | **done**: all 13 work, 5 need a CA env var ([findings](01-tls-swap/FINDINGS.md)) |
+| 2 | Can an agent VM on Incus get out without going through the gateway, even as root? | [`02-forced-egress/check.sh`](02-forced-egress/check.sh) | **done**: 21/21, no bypass found ([findings](02-forced-egress/FINDINGS.md)) |
 | 3 | Can one in-VM daemon serve both GPT's and Claude's computer-use formats on the same task? | [`03-two-computer-use/run.py`](03-two-computer-use/run.py) | written, adapters unit-tested offline |
-| 4 | How much memory does a desktop VM take, how long do stateful stop and wake take, and how many fit on one host? | `04-density/` | to do |
+| 4 | How much memory does a desktop VM take, how long do stateful stop and wake take, and how many fit on one host? | [`04-density/measure.sh`](04-density/measure.sh) | **done**: ~1.45 GiB per idle desktop, 11 s cold boot, 16 s stateful wake ([findings](04-density/FINDINGS.md)) |
 
 ## Test topology
 

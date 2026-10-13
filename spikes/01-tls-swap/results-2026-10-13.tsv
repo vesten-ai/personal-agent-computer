@@ -1,0 +1,30 @@
+client	mode	verdict	output
+curl	bare	tls-ok	200
+curl	configured	tls-ok	200
+python-urllib	bare	other	200 
+python-urllib	configured	other	200 
+python-requests	bare	tls-fail	e "/home/agent/.spike1-venv/lib/python3.12/site-packages/requests/sessions.py", line 784, in send     r = adapter.send(request, **kwargs)         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/home/agent/.spike1-venv/lib/python3.12/site-packages/requests/adapters.py", line 727, in send     raise SSLError(
+python-requests	configured	other	200 
+python-httpx	bare	tls-fail	               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   File "/home/agent/.spike1-venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request     with map_httpcore_exceptions():   File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__     self.gen.throw(value)   
+python-httpx	configured	other	200 
+node-fetch	bare	tls-fail	Error: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca     at TLSSocket.onConnectSecure (node:internal/tls/wrap:1775:34)     at TLSSocket.emit (node:events:514:28)     at TLSSocket._finishInit (node:internal/tls/wrap:1203:8)     a
+node-fetch	configured	other	200 
+npm	bare	tls-fail	npm error code UNABLE_TO_VERIFY_LEAF_SIGNATURE npm error errno UNABLE_TO_VERIFY_LEAF_SIGNATURE npm error request to https://registry.npmjs.org/left-pad failed, reason: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca npm error A co
+npm	configured	other	1.3.0 
+git	bare	other	7fd1a60b01f91b314f59955a4e4d4e80d8edf11d HEAD 
+git	configured	other	7fd1a60b01f91b314f59955a4e4d4e80d8edf11d HEAD 
+uv	bare	tls-fail	Using Python 3.12.3 environment at: .spike1-venv error: Failed to fetch: https://pypi.org/simple/six/   cause: error sending request for url (https://pypi.org/simple/six/)   cause: client error (Connect)   cause: invalid peer certificate: UnknownIssuer  hint: Consider enabling use of system TLS cert
+uv	configured	other	warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead. Using Python 3.12.3 environment at: .spike1-venv Resolved 1 package in 115ms Would download 1 package Would install 1 package  + six==1.17.0 
+pip	bare	other	Collecting six   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB) Downloading six-1.17.0-py2.py3-none-any.whl (11 kB) Saved /tmp/spike1-pip/six-1.17.0-py2.py3-none-any.whl Successfully downloaded six 
+pip	configured	other	Collecting six   File was already downloaded /tmp/spike1-pip/six-1.17.0-py2.py3-none-any.whl Successfully downloaded six 
+chromium	bare	other	в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.</p><p lang="es">Este dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar 
+chromium	configured	other	в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.</p><p lang="es">Este dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar 
+gh	bare	tls-ok	{   "message": "Bad credentials",   "documentation_url": "https://docs.github.com/rest",   "status": "401" }gh: Bad credentials (HTTP 401) 
+gh	configured	tls-ok	{   "message": "Bad credentials",   "documentation_url": "https://docs.github.com/rest",   "status": "401" }gh: Bad credentials (HTTP 401) 
+codex	bare	tls-ok	 4/5 ERROR: Reconnecting... 5/5 ERROR: unexpected status 401 Unauthorized: Incorrect API key provided: dummy-op**ai-x. You can find your API key at https://platform.openai.com/account/api-keys., url: https://api.openai.com/v1/responses, cf-ray: a49b64f168341c09-FRA, request id: req_80a98b790e6e4ec39
+codex	configured	tls-ok	 4/5 ERROR: Reconnecting... 5/5 ERROR: unexpected status 401 Unauthorized: Incorrect API key provided: dummy-op**ai-x. You can find your API key at https://platform.openai.com/account/api-keys., url: https://api.openai.com/v1/responses, cf-ray: a49b65616de73642-FRA, request id: req_2f8bdd42221e45578
+claude-code	bare	other	Invalid API key · Fix external API key 
+claude-code	configured	other	Invalid API key · Fix external API key 
+curl	echo	swap-roundtrip-ok	{"headers":{"host":"postman-echo.com","authorization":"Bearer sk-pac-echo-placeholder-0001","accept":"*/*","user-agent":"curl/8.5.0","x-forwarded-proto":"https","accept-encoding":"gzip, br"}}
+python	echo	swap-roundtrip-ok	{"headers":{"host":"postman-echo.com","authorization":"Bearer sk-pac-echo-placeholder-0001","accept":"*/*","accept-encoding":"gzip, br","user-agent":"python-requests/2.34.2","x-forwarded-proto":"https"}} 
+node	echo	swap-roundtrip-ok	{"headers":{"host":"postman-echo.com","accept-encoding":"gzip, br","user-agent":"node","sec-fetch-mode":"cors","accept-language":"*","x-forwarded-proto":"https","accept":"*/*","authorization":"Bearer sk-pac-echo-placeholder-0001"}} 

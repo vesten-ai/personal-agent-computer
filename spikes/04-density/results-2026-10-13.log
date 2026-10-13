@@ -1,0 +1,24 @@
+== spike 4 on factory1, 2026-10-13T03:54:47Z: 3 x (2 vCPU, 4GiB), image pac-desktop/dev
+host: 8 threads, 64079 MiB total, 36085 MiB available
+ksm: run=1 pages_sharing=2167
+boot pac-d1  agent_ready=16.9s desktop_ready=21.9s (first boot, includes cloud-init)
+boot pac-d2  agent_ready=17.3s desktop_ready=23.8s (first boot, includes cloud-init)
+boot pac-d3  agent_ready=18.6s desktop_ready=25.3s (first boot, includes cloud-init)
+== idle 60s with Chromium open
+mem  pac-d1  host_rss=1486MiB host_pss=1462MiB guest_used/avail=705/3204MiB
+mem  pac-d2  host_rss=1460MiB host_pss=1436MiB guest_used/avail=719/3189MiB
+mem  pac-d3  host_rss=1415MiB host_pss=1392MiB guest_used/avail=708/3200MiB
+host available: before=36085MiB after=31757MiB  => 1442 MiB per VM
+ksm: pages_sharing=10381
+== stateful stop and wake (pac-d1)
+stateful stop: 22.8s
+after stop: host available 30232MiB
+stateful wake: start=12.8s agent_ready=15.6s chromium_pid before=1687 after=1687 (same process, session kept)
+mem  pac-d1  host_rss=4159MiB host_pss=4146MiB guest_used/avail=704/3204MiB
+== pause / resume (pac-d2, memory stays resident)
+pause: 0.0s
+resume to agent_ready: 0.1s
+== cold stop and boot (pac-d3)
+stop: 1.1s
+cold boot: agent_ready=7.0s desktop_ready=11.0s
+results: /root/spike4.log
