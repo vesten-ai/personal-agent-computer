@@ -36,6 +36,8 @@ class AgentSession:
         self.worker: asyncio.Task | None = None
         self.stop_requested = False
         self.busy = False
+        self.taken_over = False      # the person is driving the computer; the agent waits
+        self.pending_note = ""       # told to the model on its next turn
         self.computer: Computer | None = None
         self.adapter = self._make_adapter()
 
@@ -77,15 +79,40 @@ class AgentSession:
     async def send(self, text: str) -> None:
         self.emit("user", {"text": text})
         await self.queue.put(text)
-        if self.worker is None or self.worker.done():
+        if self.taken_over:
+            self.emit("notice", {"text": "The agent will read this when you hand the computer back."})
+        elif self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._work())
 
     def interrupt(self) -> None:
         self.stop_requested = True
 
+    def take_over(self) -> None:
+        """The person takes the mouse and keyboard; the agent stops after its current step and waits."""
+        if self.taken_over:
+            return
+        self.taken_over = True
+        self.interrupt()
+        self.emit("notice", {"text": "You have the computer. The agent waits until you hand it back."})
+        if not self.busy:
+            self.set_status("taken_over")
+
+    def hand_back(self) -> None:
+        if not self.taken_over:
+            return
+        self.taken_over = False
+        self.pending_note = ("(The person took over your computer for a while and has handed it back. "
+                             "Things on screen may have changed: look before you continue.)")
+        self.emit("notice", {"text": "Handed back to the agent."})
+        self.set_status("ready")
+        if not self.queue.empty() and (self.worker is None or self.worker.done()):
+            self.worker = asyncio.create_task(self._work())
+
     async def _work(self) -> None:
-        while not self.queue.empty():
+        while not self.queue.empty() and not self.taken_over:
             text = await self.queue.get()
+            if self.pending_note:
+                text, self.pending_note = f"{self.pending_note}\n\n{text}", ""
             self.busy, self.stop_requested = True, False
             self.set_status("working")
             try:
@@ -99,7 +126,7 @@ class AgentSession:
             finally:
                 self.rt.store.save_history(self.id, self.adapter.state())
                 self.busy = False
-                self.set_status("ready")
+                self.set_status("taken_over" if self.taken_over else "ready")
 
     def _ensure_computer(self) -> Computer:
         mgr = self.rt.manager

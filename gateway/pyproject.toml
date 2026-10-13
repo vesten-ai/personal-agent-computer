@@ -16,4 +16,4 @@ pac-gateway = "pac_gateway.server:main"
 include = ["pac_gateway*"]
 
 [tool.setuptools.package-data]
-pac_gateway = ["static/*"]
+pac_gateway = ["static/*", "static/**/*"]
