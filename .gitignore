@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+/dist/
+/build/
+*.qcow2
+*.img
