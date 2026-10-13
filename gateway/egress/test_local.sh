@@ -32,6 +32,18 @@ r=$(curl "${P[@]}" http://127.0.0.1:22/)
 check "loopback is refused" "internal address" "$r"
 r=$(curl "${P[@]}" https://foo.internal/ 2>&1)
 check "deny-listed host is refused at CONNECT" "403" "$r"
+# The gateway rewrites the policy as agents come and go; the proxy must pick it up and honour client binding.
+sleep 1
+cat > "$S/policy.json" <<JSON
+{"default":"allow","deny_hosts":[".internal"],"audit_log":"$S/audit.jsonl",
+ "secrets":[{"name":"other-vm","placeholder":"sk-pac-other-vm-0002","env":"PAC_SECRET_TEST","hosts":["postman-echo.com"],
+             "clients":["10.9.9.9"]},
+            {"name":"test","placeholder":"$PH","env":"PAC_SECRET_TEST","hosts":["postman-echo.com"]}]}
+JSON
+r=$(curl "${P[@]}" https://postman-echo.com/headers -H "Authorization: Bearer sk-pac-other-vm-0002")
+check "rewritten policy is reloaded; another VM's placeholder is refused" "may not use other-vm" "$r"
+r=$(curl "${P[@]}" https://postman-echo.com/headers -H "Authorization: Bearer $PH")
+check "a shared secret is scrubbed back to the caller's own placeholder" "Bearer $PH" "$r"
 grep -q '"swapped": \["test"\], "scrubbed": \["test"\]' "$S/audit.jsonl" && echo "ok    audit log records swap and scrub" || { echo "FAIL  audit log"; fail=1; }
 grep -iE "traceback|error in script" "$S/mitm.log" && fail=1
 exit $fail

@@ -68,12 +68,17 @@ class IncusManager:
             return ComputerInfo(name, inst["status"], addr)
         return ComputerInfo(name, "Missing", None)
 
-    def create(self, name: str, ca_pem: str) -> None:
-        """Launch a desktop VM whose TLS clients trust the gateway's egress CA (via cloud-init)."""
+    def create(self, name: str, ca_pem: str, files: list[dict] | None = None,
+               runcmd: list[list[str]] | None = None) -> None:
+        """Launch a desktop VM whose TLS clients trust the gateway's egress CA (via cloud-init).
+
+        `files` are extra cloud-init write_files entries; `runcmd` extra first-boot commands, run before
+        the CA is trusted (wait_ready keys on the CA, so they have finished when the VM counts as ready)."""
         user_data = "#cloud-config\n" + json.dumps({
             "write_files": [{"path": "/usr/local/share/pac/gateway-ca.pem", "content": ca_pem,
-                             "permissions": "0644"}],
-            "runcmd": [["sh", "-c", "/usr/local/sbin/pac-trust-ca < /usr/local/share/pac/gateway-ca.pem"]],
+                             "permissions": "0644"}, *(files or [])],
+            "runcmd": [*(runcmd or []),
+                       ["sh", "-c", "/usr/local/sbin/pac-trust-ca < /usr/local/share/pac/gateway-ca.pem"]],
         })
         image = f"{self.remote}:{self.image}" if self.remote and ":" not in self.image else self.image
         self._run("launch", image, self._target(name), "--vm",

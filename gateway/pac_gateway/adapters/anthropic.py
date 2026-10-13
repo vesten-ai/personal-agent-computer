@@ -11,6 +11,7 @@ Wire rules this follows (platform.claude.com computer-use-tool docs, 2026-10):
 """
 
 import base64
+import json
 import os
 import time
 
@@ -98,10 +99,13 @@ def describe(name: str, a: dict) -> str:
 
 class AnthropicComputerAgent:
     def __init__(self, model: str = "claude-opus-5-5", effort: str = "medium", api_key: str | None = None,
-                 system: str = "", log=print, on_event=None, should_stop=None, base_url: str | None = None):
+                 system: str = "", log=print, on_event=None, should_stop=None, base_url: str | None = None,
+                 tools: list[dict] | None = None, call_tool=None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
         self.api = (base_url or os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")).rstrip("/") + "/v1/messages"
         self.on_event, self.should_stop = on_event, should_stop
+        # Extra tools (connectors): [{"name", "description", "input_schema"}], run by call_tool(name, args) -> str.
+        self.extra_tools, self.call_tool = tools or [], call_tool
         self.api_key = api_key or os.environ["ANTHROPIC_API_KEY"]
         self.messages: list[dict] = []
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
@@ -123,7 +127,10 @@ class AnthropicComputerAgent:
             "max_tokens": 16000,
             "thinking": {"type": "adaptive", "display": "summarized"},
             "output_config": {"effort": self.effort},
-            "tools": [{"type": "computer_toolset_20260801"}],
+            "tools": [{"type": "computer_toolset_20260801"}]
+            + [{"name": t["name"], "description": t.get("description", ""),
+                "input_schema": t.get("input_schema") or {"type": "object", "properties": {}}}
+               for t in self.extra_tools],
             "messages": self.messages,
             # Route a safety-classifier refusal to the API's default fallback instead of failing the turn.
             "fallbacks": "default",
@@ -169,6 +176,17 @@ class AnthropicComputerAgent:
             results, failed, actions = [], False, []
             t1 = time.time()
             for b in calls:
+                if b.get("toolset_name") != "computer":
+                    # A connector tool: independent of the computer batch, answered without toolset_name.
+                    try:
+                        out = self.call_tool(b["name"], b.get("input", {})) if self.call_tool else "error: no such tool"
+                        results.append({"type": "tool_result", "tool_use_id": b["id"], "content": str(out)})
+                        actions.append(f"{b['name']} {json.dumps(b.get('input', {}), ensure_ascii=False)[:200]}")
+                    except Exception as e:
+                        results.append({"type": "tool_result", "tool_use_id": b["id"], "is_error": True,
+                                        "content": f"Error: {e}"})
+                        actions.append(f"{b['name']} failed: {e}")
+                    continue
                 if failed:
                     results.append({"type": "tool_result", "tool_use_id": b["id"], "toolset_name": "computer",
                                     "is_error": True, "content": NOT_EXECUTED})
@@ -184,8 +202,10 @@ class AnthropicComputerAgent:
                                     "is_error": True, "content": f"Error: {e}"})
                     actions.append(f"{describe(b['name'], b.get('input', {}))} failed: {e}")
             # A batch that doesn't end with a screenshot gets one attached, so the model can verify.
-            if not failed and calls[-1]["name"] not in ("screenshot", "zoom"):
-                results[-1]["content"] = results[-1]["content"] + [_image(computer.screenshot())]
+            computer_calls = [b for b in calls if b.get("toolset_name") == "computer"]
+            if computer_calls and not failed and computer_calls[-1]["name"] not in ("screenshot", "zoom"):
+                last = next(r for r in reversed(results) if r["tool_use_id"] == computer_calls[-1]["id"])
+                last["content"] = last["content"] + [_image(computer.screenshot())]
             self.messages.append({"role": "user", "content": results})
             self._emit("actions", actions)
             last_image = next((c for r in reversed(results) if isinstance(r["content"], list)

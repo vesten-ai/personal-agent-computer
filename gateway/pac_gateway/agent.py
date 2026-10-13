@@ -5,6 +5,9 @@ comes back through `emit`, which persists it and fans it out to the browsers wat
 """
 
 import asyncio
+import json
+import os
+import secrets as pysecrets
 import threading
 
 from .adapters.anthropic import AnthropicComputerAgent
@@ -12,6 +15,7 @@ from .adapters.openai import OpenAIComputerAgent
 from .computer import Computer
 from .config import Config
 from .manager import IncusManager
+from .mcp import ConnectorHub
 from .store import Store
 
 SYSTEM = """You are an AI agent with your own computer: a Linux desktop (XFCE, 1280x800) that is yours to use.
@@ -44,8 +48,9 @@ class AgentSession:
     # -- model ---------------------------------------------------------------------------------
     def _make_adapter(self):
         mc = self.rt.cfg.models[self.row["model"]]
-        common = dict(model=mc.model, effort=mc.effort, api_key=mc.api_key, system=SYSTEM, log=_quiet,
-                      on_event=self.emit, should_stop=lambda: self.stop_requested, base_url=mc.base_url)
+        common = dict(model=mc.model, effort=mc.effort, api_key=mc.api_key, system=self.rt.system_prompt(),
+                      log=_quiet, on_event=self.emit, should_stop=lambda: self.stop_requested,
+                      base_url=mc.base_url, tools=self.rt.hub.tools(), call_tool=self.rt.hub.call_tool)
         if mc.api == "anthropic":
             adapter = AnthropicComputerAgent(**common)
         else:
@@ -154,12 +159,81 @@ class Runtime:
         self.cfg, self.loop = cfg, loop
         self.store = Store(cfg.data_dir)
         self.manager = IncusManager(**cfg.incus)
+        self.hub = ConnectorHub(cfg.connectors)
+        self.policy_lock = threading.Lock()
         self.sessions: dict[str, AgentSession] = {}
         for row in self.store.agents():
             if row["status"] == "working":  # the gateway restarted mid-turn
                 self.store.set_status(row["id"], "ready")
                 row["status"] = "ready"
             self.sessions[row["id"]] = AgentSession(self, row)
+        threading.Thread(target=self.write_egress_policy, daemon=True).start()
+
+    def system_prompt(self) -> str:
+        if not self.cfg.secrets:
+            return SYSTEM
+        names = ", ".join(f"${s.vm_env} ({name})" for name, s in self.cfg.secrets.items())
+        return (SYSTEM + f"\nCredentials you can use, already set in your shell environment: {names}. "
+                "They are placeholders; use them exactly as if they were the real values.")
+
+    # -- secrets ---------------------------------------------------------------------------------
+    def placeholders(self, aid: str) -> dict[str, str]:
+        return {name: self.store.placeholder(aid, name, lambda s=sec: s.prefix + pysecrets.token_hex(20))
+                for name, sec in self.cfg.secrets.items()}
+
+    def vm_files(self, aid: str) -> list[dict]:
+        """First-boot files that give the agent its placeholders, for login shells and desktop apps alike."""
+        if not self.cfg.secrets:
+            return []
+        ph = self.placeholders(aid)
+        pairs = [(self.cfg.secrets[n].vm_env, v) for n, v in ph.items()]
+        return [
+            # Login shells, and (via bash.bashrc) the terminal windows the agent opens on its desktop.
+            {"path": "/etc/profile.d/pac-secrets.sh", "permissions": "0644",
+             "content": "".join(f"export {k}={v}\n" for k, v in pairs)},
+            {"path": "/etc/bash.bashrc", "append": True,
+             "content": "[ -r /etc/profile.d/pac-secrets.sh ] && . /etc/profile.d/pac-secrets.sh\n"},
+            # Desktop apps started by the agent's systemd user manager (see vm_runcmd).
+            {"path": "/home/agent/.config/environment.d/pac-secrets.conf", "permissions": "0644",
+             "owner": "agent:agent", "defer": True, "content": "".join(f"{k}={v}\n" for k, v in pairs)},
+        ]
+
+    def vm_runcmd(self) -> list[list[str]]:
+        """The agent's user manager started before cloud-init wrote environment.d: load it and restart the
+        desktop once, so every app on it sees the placeholders."""
+        if not self.cfg.secrets:
+            return []
+        return [["runuser", "-u", "agent", "--", "env", "XDG_RUNTIME_DIR=/run/user/1000", "sh", "-c",
+                 "systemctl --user set-environment $(cat /home/agent/.config/environment.d/pac-secrets.conf) "
+                 "&& systemctl --user restart pac-xfce.service"]]
+
+    def write_egress_policy(self) -> None:
+        """Rebuild the egress proxy's policy: each agent's placeholders, bound to its VM's address."""
+        with self.policy_lock:
+            try:
+                with open(self.cfg.egress_base_policy) as f:
+                    policy = json.load(f)
+            except FileNotFoundError:
+                policy = {"default": "allow"}
+            entries = []
+            for aid, session in list(self.sessions.items()):
+                if not self.cfg.secrets or session.row["status"] in ("creating", "error"):
+                    continue
+                try:
+                    addr = self.manager.info(session.row["vm"]).address
+                except Exception:
+                    addr = None
+                if not addr:
+                    continue
+                for name, value in self.placeholders(aid).items():
+                    sec = self.cfg.secrets[name]
+                    entries.append({"name": f"{name}@{aid}", "placeholder": value, "env": sec.value_env,
+                                    "hosts": sec.hosts, "clients": [addr]})
+            policy["secrets"] = policy.get("secrets", []) + entries
+            path = self.cfg.egress_policy_file
+            with open(path + ".tmp", "w") as f:
+                json.dump(policy, f, indent=1)
+            os.replace(path + ".tmp", path)
 
     def ca_pem(self) -> str:
         with open(self.cfg.egress_ca_file) as f:
@@ -178,9 +252,11 @@ class Runtime:
     def _provision(self, session: AgentSession) -> None:
         try:
             session.emit("notice", {"text": "Setting up the computer..."})
-            self.manager.create(session.row["vm"], self.ca_pem())
+            self.manager.create(session.row["vm"], self.ca_pem(), files=self.vm_files(session.id),
+                                runcmd=self.vm_runcmd())
             self.manager.wait_ready(session.row["vm"])
             session.set_status("ready")
+            self.write_egress_policy()
             session.emit("notice", {"text": "The computer is ready."})
         except Exception as e:
             session.emit("error", {"text": f"Setting up the computer failed: {e}"[:2000]})
@@ -192,3 +268,4 @@ class Runtime:
         session.close_computer()
         self.manager.delete(session.row["vm"])
         self.store.delete_agent(aid)
+        self.write_egress_policy()
