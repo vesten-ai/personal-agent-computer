@@ -126,12 +126,14 @@ def describe(a: dict) -> str:
 class OpenAIComputerAgent:
     def __init__(self, model: str = "gpt-6.1-sol", effort: str = "medium", api_key: str | None = None,
                  system: str = "", log=print, tool_mode: str = "native", on_event=None, should_stop=None,
-                 base_url: str | None = None, tools: list[dict] | None = None, call_tool=None):
+                 base_url: str | None = None, tools: list[dict] | None = None, call_tool=None, confirm=None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
         self.on_event, self.should_stop = on_event, should_stop
         self.tool_mode = tool_mode
         # Extra tools (connectors): [{"name", "description", "input_schema"}], run by call_tool(name, args) -> str.
         self.extra_tools, self.call_tool = tools or [], call_tool
+        # confirm(question) -> bool: asks the person about a computer call the model flagged with safety checks.
+        self.confirm = confirm
         self.api = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/") + "/responses"
         self.cache_key = f"pac-{os.getpid()}-{int(time.time())}"
         self.api_key = api_key or os.environ["OPENAI_API_KEY"]
@@ -201,6 +203,17 @@ class OpenAIComputerAgent:
                                 for c in o.get("content") or [] if c.get("type") == "output_text")
                 return {"stop_reason": resp.get("status"), "final": final, "steps": steps, "usage": self.usage,
                         "model_used": resp.get("model")}
+            flagged = [c for o in calls for c in o.get("pending_safety_checks") or []]
+            if flagged:
+                question = "The model's safety check flagged the next action: " + "; ".join(
+                    c.get("message") or c.get("code") or "unspecified" for c in flagged) + ". Allow it?"
+                if not (self.confirm and self.confirm(question)):
+                    # This response was never sent back, so dropping it keeps the history append-only.
+                    del self.items[-len(output):]
+                    self.items.append({"role": "user", "content": [{"type": "input_text", "text":
+                                       "I did not allow that action. Stop and tell me what you would need instead."}]})
+                    self._emit("notice", {"text": "The flagged action was not allowed."})
+                    continue
             t1 = time.time()
             actions = []
             for call in tool_calls:
@@ -227,10 +240,7 @@ class OpenAIComputerAgent:
                         # The tool has no error result; the screenshot below shows the model what happened.
                         actions.append(f"{describe(a)} failed: {e}")
                         break
-                checks = call.get("pending_safety_checks") or []
-                if checks:
-                    # Spike only: a real gateway pauses here and asks the person before acknowledging.
-                    self.log(f"  [{step}] safety checks auto-acknowledged: {[c.get('code') for c in checks]}")
+                checks = call.get("pending_safety_checks") or []  # the person allowed these above
                 png = computer.screenshot()
                 self._emit("screenshot", png)
                 shot = base64.b64encode(png).decode()

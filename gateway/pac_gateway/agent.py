@@ -9,6 +9,7 @@ import json
 import os
 import secrets as pysecrets
 import threading
+import time
 
 from .adapters.anthropic import AnthropicComputerAgent
 from .adapters.openai import OpenAIComputerAgent
@@ -21,7 +22,8 @@ from .store import Store
 SYSTEM = """You are an AI agent with your own computer: a Linux desktop (XFCE, 1280x800) that is yours to use.
 The person you work for talks to you in this chat. Do what they ask on your computer with the screen,
 mouse and keyboard. Chromium, Mousepad (text editor), a terminal and LibreOffice are installed.
-Before anything that spends money, sends a message on the person's behalf or deletes their data, stop and ask.
+Before anything that spends money, sends a message on the person's behalf or deletes their data, get their go-ahead
+with the ask_person tool, then act on the answer.
 Credentials on this computer are placeholders; the network swaps in the real ones. If a site needs the person
 to sign in or solve a challenge, ask them to take over the screen.
 Reply in the person's language, briefly."""
@@ -29,6 +31,18 @@ Reply in the person's language, briefly."""
 
 def _quiet(*_):
     pass
+
+
+ASK_TOOL = {
+    "name": "ask_person",
+    "description": "Ask the person you work for a question and wait for the answer. Use it for a go-ahead before "
+                   "spending money, sending a message on their behalf or deleting their data, and when you are "
+                   "stuck on a choice only they can make. Keep the question short; list options when there are "
+                   "only a few sensible answers.",
+    "input_schema": {"type": "object", "properties": {
+        "question": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}}}, "required": ["question"]},
+}
 
 
 class AgentSession:
@@ -43,6 +57,10 @@ class AgentSession:
         self.taken_over = False      # the person is driving the computer; the agent waits
         self.pending_note = ""       # told to the model on its next turn
         self.computer: Computer | None = None
+        self.last_active = time.time()
+        self.sleep_state: str | None = None   # "paused" or "stopped" while the computer sleeps
+        self.viewers = 0                      # live screens open in a browser keep the computer awake
+        self.pending: dict | None = None      # a question the agent is waiting on
         self.adapter = self._make_adapter()
 
     # -- model ---------------------------------------------------------------------------------
@@ -50,15 +68,49 @@ class AgentSession:
         mc = self.rt.cfg.models[self.row["model"]]
         common = dict(model=mc.model, effort=mc.effort, api_key=mc.api_key, system=self.rt.system_prompt(),
                       log=_quiet, on_event=self.emit, should_stop=lambda: self.stop_requested,
-                      base_url=mc.base_url, tools=self.rt.hub.tools(), call_tool=self.rt.hub.call_tool)
+                      base_url=mc.base_url, tools=[ASK_TOOL, *self.rt.hub.tools()], call_tool=self._call_tool)
         if mc.api == "anthropic":
             adapter = AnthropicComputerAgent(**common)
         else:
-            adapter = OpenAIComputerAgent(**common, tool_mode=mc.tool_mode)
+            adapter = OpenAIComputerAgent(**common, tool_mode=mc.tool_mode, confirm=self._confirm)
         state = self.rt.store.load_history(self.id)
         if state:
             adapter.load(state)
         return adapter
+
+    # -- tools the gateway answers itself (called from the worker thread) ----------------------
+    def _call_tool(self, name: str, args: dict) -> str:
+        if name == "ask_person":
+            return self._ask(str(args.get("question", "")), [str(o) for o in args.get("options") or []])
+        return self.rt.hub.call_tool(name, args)
+
+    def _ask(self, question: str, options: list[str]) -> str:
+        """Put the question in front of the person and block this turn until they answer or stop it."""
+        qid = pysecrets.token_hex(6)
+        done = threading.Event()
+        self.pending = {"id": qid, "question": question, "options": options, "done": done, "answer": None}
+        self.emit("approval", {"id": qid, "question": question, "options": options or ["Yes", "No"]})
+        self.rt.loop.call_soon_threadsafe(self.set_status, "waiting")
+        try:
+            while not done.wait(1):
+                if self.stop_requested:
+                    return "The person stopped the task without answering."
+            answer = self.pending["answer"]
+        finally:
+            self.pending = None
+        self.rt.loop.call_soon_threadsafe(self.set_status, "working")
+        return f"The person answered: {answer}"
+
+    def _confirm(self, question: str) -> bool:
+        return self._ask(question, ["Allow", "Don't allow"]).endswith(": Allow")
+
+    def answer(self, qid: str, text: str) -> None:
+        p = self.pending
+        if p and p["id"] == qid and not p["done"].is_set():
+            p["answer"] = text
+            self.emit("approval_answered", {"id": qid, "answer": text})
+            p["done"].set()
+            self.touch()
 
     # -- events (may be called from the worker thread) -----------------------------------------
     def emit(self, kind: str, data) -> None:
@@ -81,7 +133,11 @@ class AgentSession:
         self.emit("status", {"status": status})
 
     # -- turns -----------------------------------------------------------------------------------
+    def touch(self) -> None:
+        self.last_active = time.time()
+
     async def send(self, text: str) -> None:
+        self.touch()
         self.emit("user", {"text": text})
         await self.queue.put(text)
         if self.taken_over:
@@ -131,15 +187,39 @@ class AgentSession:
             finally:
                 self.rt.store.save_history(self.id, self.adapter.state())
                 self.busy = False
+                self.touch()
                 self.set_status("taken_over" if self.taken_over else "ready")
 
-    def _ensure_computer(self) -> Computer:
+    def wake(self) -> None:
+        """Bring the computer back from sleep (blocking; call from a worker thread)."""
         mgr = self.rt.manager
         if mgr.info(self.row["vm"]).state != "Running":
             self.emit("notice", {"text": "Waking the computer..."})
+            t0 = time.time()
             mgr.start(self.row["vm"])
             mgr.wait_ready(self.row["vm"])
             self.close_computer()
+            self.emit("notice", {"text": f"The computer is awake ({time.time() - t0:.0f} s)."})
+        if self.sleep_state:
+            self.sleep_state = None
+            self.emit("status", {"status": self.row["status"]})
+        self.touch()
+
+    def sleep(self, how: str) -> None:
+        """Pause or stop the computer (blocking; call from a worker thread)."""
+        self.close_computer()
+        if how == "stopped":
+            self.rt.manager.stop(self.row["vm"])
+            self.emit("notice", {"text": "The computer was idle and has been shut down. A new message wakes it."})
+        else:
+            self.rt.manager.pause(self.row["vm"])
+            self.emit("notice", {"text": "The computer was idle and has been paused."})
+        self.sleep_state = how
+        self.emit("status", {"status": "asleep"})
+
+    def _ensure_computer(self) -> Computer:
+        mgr = self.rt.manager
+        self.wake()
         if self.computer is None or self.computer.proc.poll() is not None:
             self.computer = Computer(mgr.computerd_argv(self.row["vm"]))
         return self.computer
@@ -163,11 +243,45 @@ class Runtime:
         self.policy_lock = threading.Lock()
         self.sessions: dict[str, AgentSession] = {}
         for row in self.store.agents():
-            if row["status"] == "working":  # the gateway restarted mid-turn
+            if row["status"] in ("working", "waiting"):  # the gateway restarted mid-turn
                 self.store.set_status(row["id"], "ready")
                 row["status"] = "ready"
             self.sessions[row["id"]] = AgentSession(self, row)
-        threading.Thread(target=self.write_egress_policy, daemon=True).start()
+        threading.Thread(target=self._startup_sync, daemon=True).start()
+        self.reaper = loop.create_task(self._reap_idle())
+
+    def _startup_sync(self) -> None:
+        for session in list(self.sessions.values()):
+            if session.row["status"] in ("creating", "error"):
+                continue
+            try:
+                state = self.manager.info(session.row["vm"]).state
+            except Exception:
+                continue
+            session.sleep_state = {"Frozen": "paused", "Stopped": "stopped"}.get(state)
+        self.write_egress_policy()
+
+    async def _reap_idle(self) -> None:
+        """Put idle computers to sleep: pause first, stop later."""
+        pause_s, stop_s = self.cfg.idle_pause_minutes * 60, self.cfg.idle_stop_minutes * 60
+        while True:
+            await asyncio.sleep(30)
+            now = time.time()
+            for session in list(self.sessions.values()):
+                if (session.busy or session.taken_over or session.viewers or not session.queue.empty()
+                        or session.row["status"] != "ready"):
+                    continue
+                idle = now - session.last_active
+                how = None
+                if stop_s and idle >= stop_s and session.sleep_state != "stopped":
+                    how = "stopped"
+                elif pause_s and idle >= pause_s and session.sleep_state is None:
+                    how = "paused"
+                if how:
+                    try:
+                        await asyncio.to_thread(session.sleep, how)
+                    except Exception as e:
+                        session.emit("error", {"text": f"Putting the computer to sleep failed: {e}"[:500]})
 
     def system_prompt(self) -> str:
         if not self.cfg.secrets:

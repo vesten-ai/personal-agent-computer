@@ -4,8 +4,8 @@ A self-hostable computer for your AI agent. Every agent gets its own Linux
 desktop virtual machine. You talk to it from a web chat page, watch its screen,
 and take over the mouse and keyboard when you need to.
 
-> Status: early. We are running the first technical spikes; nothing here is
-> ready to use yet.
+> Status: early. v1 runs end to end on one Incus host; expect rough edges.
+> [Install it](docs/install.md).
 
 ## How it fits together
 
@@ -44,10 +44,12 @@ and take over the mouse and keyboard when you need to.
 
 | Path | What |
 |------|------|
-| `spikes/` | Throwaway experiments that answer one question each, with their findings |
-| `docs/` | Design notes |
-
-More directories will appear as the spikes turn into real components.
+| `install.sh` | One-shot installer for an Incus host ([docs/install.md](docs/install.md)) |
+| `gateway/` | The gateway: agent loop, model adapters, web page, connectors, egress proxy addon |
+| `image/` | Builds the desktop image and the computer-use daemon that runs inside it |
+| `host/` | Host network and Incus setup |
+| `spikes/` | The experiments that settled the design, with their findings |
+| `docs/` | Install guide and design notes |
 
 ## License
 

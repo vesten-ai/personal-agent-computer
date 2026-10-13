@@ -37,6 +37,9 @@
   .msg.act { font: 12px/1.4 var(--mono); color: var(--muted); background: transparent; }
   .msg.notice { color: var(--warn); font-size: 13px; background: transparent; border: 0; padding: 0 4px; }
   .msg.error { color: var(--err); }
+  .msg.approval { border-color: var(--warn); display: grid; gap: 8px; max-width: 100%; }
+  .approval .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+  .approval .answered { color: var(--muted); font-size: 13px; }
   .compose { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
   .compose textarea { resize: none; height: 44px; }
   section { display: flex; flex-direction: column; padding: 16px; gap: 8px; }
@@ -81,6 +84,7 @@
     <div class="bar">
       <span id="title">No agent selected</span>
       <span class="tools"><span id="status"></span>
+        <button id="wake" class="ghost" type="button" hidden>Wake</button>
         <button id="takeover" class="ghost" type="button" hidden>Take over</button>
         <button id="handback" type="button" hidden>Hand back</button></span>
     </div>
@@ -111,7 +115,7 @@ async function loadAgents() {
     li.className = a.id === current ? "on" : "";
     li.innerHTML = `<span></span><span class="st"></span>`;
     li.firstChild.textContent = a.name;
-    li.lastChild.textContent = a.busy ? "working" : a.status;
+    li.lastChild.textContent = a.taken_over ? "taken over" : a.status === "waiting" ? "waiting for you" : a.busy ? "working" : a.status;
     li.onclick = () => select(a.id);
     return li;
   }));
@@ -132,6 +136,8 @@ function add(ev) {
     case "notice": cls = "notice"; text = d.text; break;
     case "error": cls = "error"; text = d.text; break;
     case "screenshot": $("screen").src = `/api/agents/${current}/screen.png?t=${ev.id}`; return;
+    case "approval": addApproval(d); return;
+    case "approval_answered": settleApproval(d.id, d.answer); return;
     case "status":
       if (replaying) return;
       setStatus(d.status);
@@ -147,6 +153,46 @@ function add(ev) {
   log.scrollTop = log.scrollHeight;
 }
 
+// The agent asks before risky steps: a card with the options, answered by a click (or typed text).
+function addApproval(d) {
+  const log = $("log");
+  log.querySelector(".empty")?.remove();
+  const card = document.createElement("div");
+  card.className = "msg approval";
+  card.dataset.qid = d.id;
+  const q = document.createElement("div");
+  q.textContent = d.question;
+  const row = document.createElement("div");
+  row.className = "choices";
+  for (const opt of d.options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = opt;
+    b.onclick = () => ws?.send(JSON.stringify({ type: "answer", id: d.id, text: opt }));
+    row.append(b);
+  }
+  const other = document.createElement("input");
+  other.placeholder = "Or type an answer";
+  other.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.isComposing && other.value.trim()) {
+      ws?.send(JSON.stringify({ type: "answer", id: d.id, text: other.value.trim() }));
+    }
+  };
+  card.append(q, row, other);
+  log.append(card);
+  log.scrollTop = log.scrollHeight;
+}
+
+function settleApproval(id, answer) {
+  const card = document.querySelector(`.approval[data-qid="${id}"]`);
+  if (!card) return;
+  card.querySelectorAll("button, input").forEach((el) => el.remove());
+  const a = document.createElement("div");
+  a.className = "answered";
+  a.textContent = `You answered: ${answer}`;
+  card.append(a);
+}
+
 // Just enough Markdown for chat replies: **bold** and `code`, on HTML-escaped text.
 function inline(t) {
   const esc = t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -154,12 +200,13 @@ function inline(t) {
 }
 
 function setStatus(s) {
-  $("status").textContent = s === "taken_over" ? "you have control" : s;
-  $("stop").hidden = s !== "working";
-  const ready = s === "ready" || s === "working" || s === "taken_over";
+  $("status").textContent = { taken_over: "you have control", waiting: "waiting for your answer" }[s] || s;
+  $("stop").hidden = s !== "working" && s !== "waiting";
+  $("wake").hidden = s !== "asleep";
+  const ready = ["ready", "working", "waiting", "taken_over", "asleep"].includes(s);
   $("text").disabled = $("send").disabled = !ready;
   takenOver = s === "taken_over";
-  $("takeover").hidden = !ready || takenOver;
+  $("takeover").hidden = !ready || takenOver || s === "asleep";
   $("handback").hidden = !takenOver;
   if (rfb) rfb.viewOnly = !takenOver;
   $("live").classList.toggle("control", takenOver);
@@ -199,7 +246,7 @@ async function select(id) {
   replaying = true;
   events.forEach(add);
   replaying = false;
-  setStatus(a.taken_over ? "taken_over" : a.busy ? "working" : a.status);
+  setStatus(a.taken_over ? "taken_over" : a.status === "waiting" ? "waiting" : a.busy ? "working" : a.status);
   if (a.status !== "creating" && a.status !== "error") connectScreen(id);
   ws = new WebSocket(`${wsBase}/api/agents/${id}/ws`);
   ws.onmessage = (m) => add(JSON.parse(m.data));
@@ -225,6 +272,7 @@ $("stop").onclick = () => ws?.send(JSON.stringify({ type: "stop" }));
 $("screen").onload = () => { if (!rfb || $("live").hidden) { $("screen").hidden = false; $("noscreen").hidden = true; } };
 $("screen").onerror = () => { $("screen").hidden = true; $("noscreen").hidden = !$("live").hidden; };
 $("takeover").onclick = () => ws?.send(JSON.stringify({ type: "take_over" }));
+$("wake").onclick = () => ws?.send(JSON.stringify({ type: "wake" }));
 $("handback").onclick = () => ws?.send(JSON.stringify({ type: "hand_back" }));
 loadAgents();
 </script>

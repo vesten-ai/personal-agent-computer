@@ -41,7 +41,8 @@ def build_app(cfg: config.Config) -> Starlette:
 
     def view(s) -> dict:
         r = s.row
-        return {"id": r["id"], "name": r["name"], "model": r["model"], "status": r["status"], "busy": s.busy,
+        status = "asleep" if s.sleep_state and not s.busy and r["status"] == "ready" else r["status"]
+        return {"id": r["id"], "name": r["name"], "model": r["model"], "status": status, "busy": s.busy,
                 "taken_over": s.taken_over}
 
     async def index(request: Request):
@@ -90,7 +91,7 @@ def build_app(cfg: config.Config) -> Starlette:
         if not authorized(request):
             return JSONResponse({"error": "unauthorized"}, 401)
         aid = request.path_params["aid"]
-        after = int(request.query_params.get("after", 0))
+        after = int(request.query_params.get("after") or 0)
         return JSONResponse({"events": rt().store.events(aid, after)})
 
     async def screen(request: Request):
@@ -129,6 +130,10 @@ def build_app(cfg: config.Config) -> Starlette:
                     session.take_over()
                 elif msg.get("type") == "hand_back":
                     session.hand_back()
+                elif msg.get("type") == "answer":
+                    session.answer(str(msg.get("id", "")), str(msg.get("text", "")).strip()[:2000])
+                elif msg.get("type") == "wake" and not session.busy:
+                    asyncio.create_task(asyncio.to_thread(session.wake))
         except WebSocketDisconnect:
             pass
         finally:
@@ -149,6 +154,8 @@ def build_app(cfg: config.Config) -> Starlette:
             await ws.close(code=4409, reason="the computer is asleep")
             return
         await ws.accept(subprotocol="binary" if "binary" in ws.scope.get("subprotocols", []) else None)
+        session.viewers += 1
+        session.touch()
         proc = await asyncio.create_subprocess_exec(
             *rt().manager.vnc_argv(vm), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL)
@@ -172,6 +179,8 @@ def build_app(cfg: config.Config) -> Starlette:
         except Exception:
             pass
         finally:
+            session.viewers -= 1
+            session.touch()
             for t in tasks:
                 t.cancel()
             if proc.returncode is None:

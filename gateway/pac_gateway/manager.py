@@ -61,7 +61,7 @@ class IncusManager:
             if inst["name"] != name:
                 continue
             addr = None
-            for nic in (inst.get("state") or {}).get("network", {}).values():
+            for nic in ((inst.get("state") or {}).get("network") or {}).values():  # null while stopped
                 for a in nic.get("addresses", []):
                     if a["family"] == "inet" and a["scope"] == "global":
                         addr = a["address"]
@@ -108,9 +108,18 @@ class IncusManager:
         if self.info(name).state == "Running":
             self._run("pause", self._target(name))
 
-    def stop(self, name: str, stateful: bool = False) -> None:
-        if self.info(name).state in ("Running", "Frozen"):
-            self._run("stop", self._target(name), *(["--stateful"] if stateful else []))
+    def stop(self, name: str, stateful: bool = False, timeout: int = 60) -> None:
+        """Shut the VM down cleanly; force it if the guest doesn't finish within `timeout` seconds.
+        (A guest just unpaused can sit on the ACPI request for minutes.)"""
+        if self.info(name).state not in ("Running", "Frozen"):
+            return
+        try:
+            self._run("stop", self._target(name), *(["--stateful"] if stateful else []),
+                      "--timeout", str(timeout), timeout=timeout + 60)
+        except (ManagerError, subprocess.TimeoutExpired):
+            if stateful:
+                raise
+            self._run("stop", self._target(name), "--force")
 
     def delete(self, name: str) -> None:
         if self.info(name).state != "Missing":
