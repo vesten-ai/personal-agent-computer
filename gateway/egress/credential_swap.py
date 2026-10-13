@@ -9,7 +9,9 @@ through this proxy, which:
   3. swaps each placeholder for its real secret, but only on requests to the hosts that
      secret is bound to (Host header and TLS SNI must both match). A placeholder headed
      anywhere else is blocked instead of forwarded;
-  4. scrubs real secrets out of responses, in case an upstream echoes them back;
+  4. scrubs real secrets out of responses, in case an upstream echoes them back. Event streams
+     (server-sent events, NDJSON) and large bodies are passed through as they arrive and
+     scrubbed chunk by chunk, so streaming model replies stay streaming;
   5. writes one JSON line per request to the audit log.
 
 Run:  mitmdump --mode transparent@8081 --mode regular@8080 --mode dns@53 \
@@ -50,6 +52,40 @@ INTERNAL_NETWORKS = [
 # Bodies larger than this are forwarded untouched (and a placeholder inside them stays a placeholder).
 MAX_SCAN_BYTES = 4 * 1024 * 1024
 TEXT_TYPES = ("json", "x-www-form-urlencoded", "text/", "xml", "graphql")
+# Responses relayed chunk by chunk instead of buffered whole.
+STREAM_TYPES = ("text/event-stream", "application/x-ndjson", "application/stream+json")
+
+
+def stream_scrubber(pairs: list[tuple[bytes, bytes, str]], hit=lambda name: None):
+    """A mitmproxy stream function that replaces each secret with its mask as chunks pass, calling
+    hit(name) for each secret it finds.
+
+    A secret can be split across two chunks, so the end of a chunk that could be the start of a
+    secret is held back until the next chunk (or the end of the stream, signalled by b"")."""
+    pairs = [p for p in pairs if p[0]]
+    buf = b""
+
+    def held(data: bytes) -> int:
+        best = 0
+        for v, _, _ in pairs:
+            for n in range(min(len(v) - 1, len(data)), best, -1):
+                if data.endswith(v[:n]):
+                    best = n
+                    break
+        return best
+
+    def stream(chunk: bytes) -> bytes:
+        nonlocal buf
+        data = buf + chunk
+        for v, m, name in pairs:
+            if v in data:
+                data = data.replace(v, m)
+                hit(name)
+        keep = held(data) if chunk else 0
+        buf = data[len(data) - keep:] if keep else b""
+        return data[:len(data) - keep]
+
+    return stream
 
 
 def _is_ip(s: str) -> bool:
@@ -208,16 +244,40 @@ class CredentialSwap:
             self._replace(req, s.placeholder, s.value)
             flow.metadata["pac_swapped"].append(s.name)
 
+    def _masks(self, flow: http.HTTPFlow) -> list[tuple[object, str]]:
+        """(secret, what replaces it in a response to this client), own placeholders first.
+
+        Several agents can share one real secret. Put back this client's own placeholder, and never
+        hand one agent another agent's placeholder: anything else is redacted outright."""
+        client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else ""
+        ordered = sorted((s for s in self.policy.secrets if s.value), key=lambda s: not s.usable_by(client_ip))
+        return [(s, s.placeholder if s.usable_by(client_ip) else "[redacted by pac]") for s in ordered]
+
+    def responseheaders(self, flow: http.HTTPFlow) -> None:
+        resp = flow.response
+        if resp is None or flow.metadata.get("pac_blocked"):
+            return
+        ctype = resp.headers.get("content-type", "").lower()
+        try:
+            length = int(resp.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if any(t in ctype for t in STREAM_TYPES) or length > MAX_SCAN_BYTES:
+            # Dedupe on the real value: a mask only needs to be applied once per value.
+            pairs, seen = [], set()
+            for s, mask in self._masks(flow):
+                if s.value not in seen:
+                    seen.add(s.value)
+                    pairs.append((s.value.encode(), mask.encode(), s.name))
+            hits = flow.metadata.setdefault("pac_scrubbed", [])
+            resp.stream = stream_scrubber(pairs, lambda name: name in hits or hits.append(name))
+            flow.metadata["pac_streamed"] = True
+
     def response(self, flow: http.HTTPFlow) -> None:
         resp = flow.response
         if resp is not None and not flow.metadata.get("pac_blocked"):
-            client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else ""
-            # Several agents can share one real secret. Put back this client's own placeholder, and never
-            # hand one agent another agent's placeholder: anything else is redacted outright.
-            ordered = sorted((s for s in self.policy.secrets if s.value), key=lambda s: not s.usable_by(client_ip))
-            for s in ordered:
+            for s, mask in self._masks(flow):  # a streamed body was scrubbed as it passed; headers are here
                 if self._contains(resp, s.value):
-                    mask = s.placeholder if s.usable_by(client_ip) else "[redacted by pac]"
                     self._replace(resp, s.value, mask)
                     flow.metadata.setdefault("pac_scrubbed", []).append(s.name)
         self._audit(flow)
@@ -275,6 +335,7 @@ class CredentialSwap:
             "status": flow.response.status_code if flow.response else None,
             "swapped": flow.metadata.get("pac_swapped", []),
             "scrubbed": flow.metadata.get("pac_scrubbed", []),
+            "streamed": bool(flow.metadata.get("pac_streamed")),
             "blocked": flow.metadata.get("pac_blocked"),
             "error": str(flow.error) if flow.error else None,
         }
