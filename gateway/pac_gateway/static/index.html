@@ -43,6 +43,11 @@
   .screen { width: 100%; aspect-ratio: 16 / 10; background: #000; border-radius: 8px; object-fit: contain; }
   .screen[hidden] { display: none; }
   .placeholder { display: grid; place-items: center; color: #8a8a85; font-size: 13px; }
+  .live { overflow: hidden; }
+  .live.control { outline: 2px solid var(--accent); }
+  .tools { display: flex; align-items: center; gap: 8px; }
+  .tools button { padding: 4px 10px; font-size: 13px; }
+  .hint { margin: 0; color: var(--muted); font-size: 13px; }
   .bar { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 13px; }
   .empty { color: var(--muted); margin: auto; text-align: center; }
   @media (max-width: 900px) {
@@ -73,14 +78,23 @@
     </form>
   </main>
   <section>
-    <div class="bar"><span id="title">No agent selected</span><span id="status"></span></div>
+    <div class="bar">
+      <span id="title">No agent selected</span>
+      <span class="tools"><span id="status"></span>
+        <button id="takeover" class="ghost" type="button" hidden>Take over</button>
+        <button id="handback" type="button" hidden>Hand back</button></span>
+    </div>
+    <div class="screen live" id="live" hidden></div>
     <img class="screen" id="screen" alt="The agent's screen" hidden>
     <div class="screen placeholder" id="noscreen">No screenshot yet</div>
+    <p class="hint" id="hint"></p>
   </section>
 </div>
-<script>
+<script type="module">
+import RFB from "/static/novnc/core/rfb.js";
 const $ = (id) => document.getElementById(id);
-let agents = [], current = null, ws = null, lastId = 0;
+const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+let agents = [], current = null, ws = null, lastId = 0, rfb = null, takenOver = false, replaying = false;
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
@@ -118,7 +132,11 @@ function add(ev) {
     case "notice": cls = "notice"; text = d.text; break;
     case "error": cls = "error"; text = d.text; break;
     case "screenshot": $("screen").src = `/api/agents/${current}/screen.png?t=${ev.id}`; return;
-    case "status": setStatus(d.status); return;
+    case "status":
+      if (replaying) return;
+      setStatus(d.status);
+      if (d.status === "ready" && !rfb) connectScreen(current);
+      return;
   }
   if (text == null || text === "") return;
   log.querySelector(".empty")?.remove();
@@ -136,11 +154,38 @@ function inline(t) {
 }
 
 function setStatus(s) {
-  $("status").textContent = s;
+  $("status").textContent = s === "taken_over" ? "you have control" : s;
   $("stop").hidden = s !== "working";
-  const ready = s === "ready" || s === "working";
+  const ready = s === "ready" || s === "working" || s === "taken_over";
   $("text").disabled = $("send").disabled = !ready;
+  takenOver = s === "taken_over";
+  $("takeover").hidden = !ready || takenOver;
+  $("handback").hidden = !takenOver;
+  if (rfb) rfb.viewOnly = !takenOver;
+  $("live").classList.toggle("control", takenOver);
+  $("hint").textContent = takenOver ? "You are driving. Hand back when you are done; the agent will look before it continues." : "";
   loadAgents();
+}
+
+// Live screen through the gateway's VNC relay; the last screenshot stands in while it is not connected.
+function connectScreen(id) {
+  rfb?.disconnect();
+  rfb = null;
+  const el = $("live");
+  el.replaceChildren();
+  const r = new RFB(el, `${wsBase}/api/agents/${id}/vnc`, { wsProtocols: ["binary"] });
+  r.viewOnly = !takenOver;
+  r.scaleViewport = true;
+  r.background = "#000";
+  r.addEventListener("connect", () => { el.hidden = false; $("screen").hidden = $("noscreen").hidden = true; });
+  r.addEventListener("disconnect", () => {
+    if (rfb !== r) return;
+    rfb = null;
+    el.hidden = true;
+    $("screen").dispatchEvent(new Event($("screen").naturalWidth ? "load" : "error"));
+    setTimeout(() => current === id && !rfb && connectScreen(id), 5000);
+  });
+  rfb = r;
 }
 
 async function select(id) {
@@ -151,9 +196,12 @@ async function select(id) {
   $("log").replaceChildren();
   $("screen").src = `/api/agents/${id}/screen.png?t=${Date.now()}`;
   const { events } = await api(`/api/agents/${id}/events`);
+  replaying = true;
   events.forEach(add);
-  setStatus(a.busy ? "working" : a.status);
-  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/agents/${id}/ws`);
+  replaying = false;
+  setStatus(a.taken_over ? "taken_over" : a.busy ? "working" : a.status);
+  if (a.status !== "creating" && a.status !== "error") connectScreen(id);
+  ws = new WebSocket(`${wsBase}/api/agents/${id}/ws`);
   ws.onmessage = (m) => add(JSON.parse(m.data));
   ws.onclose = () => { if (current === id) setTimeout(() => current === id && select(id), 2000); };
 }
@@ -174,8 +222,10 @@ $("compose").onsubmit = (e) => {
 };
 $("text").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("compose").requestSubmit(); } };
 $("stop").onclick = () => ws?.send(JSON.stringify({ type: "stop" }));
-$("screen").onload = () => { $("screen").hidden = false; $("noscreen").hidden = true; };
-$("screen").onerror = () => { $("screen").hidden = true; $("noscreen").hidden = false; };
+$("screen").onload = () => { if (!rfb || $("live").hidden) { $("screen").hidden = false; $("noscreen").hidden = true; } };
+$("screen").onerror = () => { $("screen").hidden = true; $("noscreen").hidden = !$("live").hidden; };
+$("takeover").onclick = () => ws?.send(JSON.stringify({ type: "take_over" }));
+$("handback").onclick = () => ws?.send(JSON.stringify({ type: "hand_back" }));
 loadAgents();
 </script>
 </body>

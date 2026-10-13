@@ -41,7 +41,8 @@ def build_app(cfg: config.Config) -> Starlette:
 
     def view(s) -> dict:
         r = s.row
-        return {"id": r["id"], "name": r["name"], "model": r["model"], "status": r["status"], "busy": s.busy}
+        return {"id": r["id"], "name": r["name"], "model": r["model"], "status": r["status"], "busy": s.busy,
+                "taken_over": s.taken_over}
 
     async def index(request: Request):
         if not authorized(request):
@@ -124,11 +125,60 @@ def build_app(cfg: config.Config) -> Starlette:
                     await session.send(str(msg["text"]).strip())
                 elif msg.get("type") == "stop":
                     session.interrupt()
+                elif msg.get("type") == "take_over":
+                    session.take_over()
+                elif msg.get("type") == "hand_back":
+                    session.hand_back()
         except WebSocketDisconnect:
             pass
         finally:
             sender.cancel()
             session.subscribers.discard(q)
+
+    async def vnc_ws(ws: WebSocket):
+        """The agent's screen for noVNC: websocket bytes <-> x11vnc on the VM's loopback, through Incus exec."""
+        if not authorized(ws):
+            await ws.close(code=4401)
+            return
+        session = rt().sessions.get(ws.path_params["aid"])
+        if session is None or session.row["status"] in ("creating", "error"):
+            await ws.close(code=4404)
+            return
+        vm = session.row["vm"]
+        if (await asyncio.to_thread(rt().manager.info, vm)).state != "Running":
+            await ws.close(code=4409, reason="the computer is asleep")
+            return
+        await ws.accept(subprotocol="binary" if "binary" in ws.scope.get("subprotocols", []) else None)
+        proc = await asyncio.create_subprocess_exec(
+            *rt().manager.vnc_argv(vm), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+
+        async def to_vm():
+            while True:
+                data = await ws.receive_bytes()
+                proc.stdin.write(data)
+                await proc.stdin.drain()
+
+        async def to_browser():
+            while True:
+                data = await proc.stdout.read(65536)
+                if not data:
+                    return
+                await ws.send_bytes(data)
+
+        tasks = [asyncio.create_task(to_vm()), asyncio.create_task(to_browser())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        except Exception:
+            pass
+        finally:
+            for t in tasks:
+                t.cancel()
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+            with contextlib.suppress(Exception):
+                await ws.close()
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -145,6 +195,7 @@ def build_app(cfg: config.Config) -> Starlette:
             Route("/api/agents/{aid}/events", events),
             Route("/api/agents/{aid}/screen.png", screen),
             WebSocketRoute("/api/agents/{aid}/ws", agent_ws),
+            WebSocketRoute("/api/agents/{aid}/vnc", vnc_ws),
             Mount("/static", StaticFiles(directory=STATIC), name="static"),
         ],
         lifespan=lifespan,
