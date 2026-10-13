@@ -136,6 +136,25 @@ class OpenAIAdapter(unittest.TestCase):
         self.assertEqual(cco["call_id"], "call_1")
         self.assertTrue(cco["output"]["image_url"].startswith("data:image/png;base64,"))
 
+    def test_function_tool_mode(self):
+        c = FakeComputer()
+        turns = [
+            {"status": "completed", "output": [{
+                "type": "function_call", "name": "computer", "call_id": "fc_1",
+                "arguments": '{"actions":[{"type":"click","x":7,"y":8},{"type":"type","text":"hi"}]}'}]},
+            {"status": "completed", "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]},
+        ]
+        agent = oai.OpenAIComputerAgent(api_key="x", log=lambda *_: None, tool_mode="function")
+        with mock.patch.object(oai, "post_json", side_effect=turns) as post:
+            agent.run("task", c)
+        self.assertEqual(c.calls[0], ("click", {"x": 7, "y": 8, "button": "left", "modifiers": []}))
+        body = post.call_args_list[1].args[2]
+        self.assertEqual(body["tools"][0]["name"], "computer")
+        out = body["input"][2]
+        self.assertEqual((out["type"], out["call_id"]), ("function_call_output", "fc_1"))
+        self.assertEqual(out["output"][1]["type"], "input_image")
+
 
 if __name__ == "__main__":
     unittest.main()
