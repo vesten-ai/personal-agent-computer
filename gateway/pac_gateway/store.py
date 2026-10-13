@@ -91,6 +91,12 @@ class Store:
                                    (aid, after, limit)).fetchall()
         return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
+    def last_events(self, aid: str, n: int) -> list[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM (SELECT * FROM events WHERE agent_id = ? ORDER BY id DESC LIMIT ?)"
+                                   " ORDER BY id", (aid, n)).fetchall()
+        return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
+
     # -- per-agent files -----------------------------------------------------------------------
     def agent_dir(self, aid: str) -> str:
         return os.path.join(self.dir, "agents", aid)

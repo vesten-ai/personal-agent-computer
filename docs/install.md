@@ -57,6 +57,23 @@ Change the address ranges with `PAC_SUBNET` / `PAC_BUILD_SUBNET` if they collide
 
 3. Add an agent, wait for its computer to start (a minute the first time), and tell it what to do.
 
+## From the terminal
+
+`install.sh` also puts a `pac` command on the host, which runs in the gateway container:
+
+```bash
+pac create assistant                  # waits until its computer is ready
+pac send assistant "Find the cheapest flight from Berlin to Lisbon next Friday"
+pac list
+pac log assistant -n 20
+pac pause assistant                   # or: pac stop, pac wake
+pac delete assistant
+```
+
+`pac send` follows the agent until it is done and asks you on the terminal when the agent needs an
+approval; Ctrl-C asks it to stop. From another machine, set `PAC_URL` (for example the SSH tunnel's
+http://127.0.0.1:8090) and `PAC_TOKEN` (the admin token) and run `pac` from `pip install ./gateway`.
+
 ## Credentials for the agent
 
 Agents never hold real credentials. For each secret, the real value goes in the egress proxy's

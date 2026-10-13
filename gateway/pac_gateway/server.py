@@ -87,10 +87,66 @@ def build_app(cfg: config.Config) -> Starlette:
         await asyncio.to_thread(rt().delete_agent, aid)
         return JSONResponse({"ok": True})
 
+    def session_for(request: Request):
+        """(session, None) for an authorized request about a known agent, else (None, error response)."""
+        if not authorized(request):
+            return None, JSONResponse({"error": "unauthorized"}, 401)
+        session = rt().sessions.get(request.path_params["aid"])
+        if session is None:
+            return None, JSONResponse({"error": "not found"}, 404)
+        return session, None
+
+    async def post_message(request: Request):
+        session, err = session_for(request)
+        if err:
+            return err
+        text = str((await request.json()).get("text", "")).strip()
+        if not text:
+            return JSONResponse({"error": "text required"}, 400)
+        return JSONResponse({"event_id": await session.send(text)}, 202)
+
+    async def post_answer(request: Request):
+        session, err = session_for(request)
+        if err:
+            return err
+        body = await request.json()
+        session.answer(str(body.get("id", "")), str(body.get("text", "")).strip()[:2000])
+        return JSONResponse({"ok": True})
+
+    async def post_interrupt(request: Request):
+        session, err = session_for(request)
+        if err:
+            return err
+        session.interrupt()
+        return JSONResponse({"ok": True})
+
+    async def post_wake(request: Request):
+        session, err = session_for(request)
+        if err:
+            return err
+        if session.busy:
+            return JSONResponse({"error": "the agent is working, so its computer is awake"}, 409)
+        await asyncio.to_thread(session.wake)
+        return JSONResponse(view(session))
+
+    async def post_sleep(request: Request):
+        session, err = session_for(request)
+        if err:
+            return err
+        how = (await request.json()).get("how", "paused")
+        if how not in ("paused", "stopped"):
+            return JSONResponse({"error": "how must be paused or stopped"}, 400)
+        if session.busy or session.row["status"] != "ready":
+            return JSONResponse({"error": f"the agent is {session.row['status']}; try again when it is ready"}, 409)
+        await asyncio.to_thread(session.sleep, how, False)
+        return JSONResponse(view(session))
+
     async def events(request: Request):
         if not authorized(request):
             return JSONResponse({"error": "unauthorized"}, 401)
         aid = request.path_params["aid"]
+        if request.query_params.get("last"):
+            return JSONResponse({"events": rt().store.last_events(aid, min(int(request.query_params["last"]), 500))})
         after = int(request.query_params.get("after") or 0)
         return JSONResponse({"events": rt().store.events(aid, after)})
 
@@ -202,6 +258,11 @@ def build_app(cfg: config.Config) -> Starlette:
             Route("/api/agents", create_agent, methods=["POST"]),
             Route("/api/agents/{aid}", delete_agent, methods=["DELETE"]),
             Route("/api/agents/{aid}/events", events),
+            Route("/api/agents/{aid}/messages", post_message, methods=["POST"]),
+            Route("/api/agents/{aid}/answer", post_answer, methods=["POST"]),
+            Route("/api/agents/{aid}/interrupt", post_interrupt, methods=["POST"]),
+            Route("/api/agents/{aid}/wake", post_wake, methods=["POST"]),
+            Route("/api/agents/{aid}/sleep", post_sleep, methods=["POST"]),
             Route("/api/agents/{aid}/screen.png", screen),
             WebSocketRoute("/api/agents/{aid}/ws", agent_ws),
             WebSocketRoute("/api/agents/{aid}/vnc", vnc_ws),

@@ -82,5 +82,5 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now pac-egress-fw.service pac-egress.service >/dev/null 2>&1
 systemctl restart pac-egress.service
-for i in $(seq 1 30); do [ -s /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
+for _ in $(seq 1 30); do [ -s /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
 echo "egress proxy up; CA at /var/lib/pac-egress/mitm/mitmproxy-ca-cert.pem"

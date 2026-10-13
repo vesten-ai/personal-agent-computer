@@ -68,6 +68,15 @@ fi
 "${GW_EXEC[@]}" env PAC_JOIN_TOKEN="$token" bash /opt/pac/src/gateway/deploy/gateway-container.sh
 "${GW_EXEC[@]}" sh -c 'uv pip install -q --reinstall-package pac-gateway --python /opt/pac/gateway-venv/bin/python /opt/pac/src/gateway && systemctl restart pac-gateway'
 
+step "pac command"
+cat > /usr/local/bin/pac <<'SH'
+#!/bin/sh
+# Manage agents from this host: the pac CLI runs in the gateway container. Try `pac --help`.
+exec incus exec --project pac pac-gw -- /opt/pac/gateway-venv/bin/pac "$@"
+SH
+chmod 0755 /usr/local/bin/pac
+echo "installed /usr/local/bin/pac"
+
 step "done"
 cat <<MSG
 The gateway listens on this host at 127.0.0.1:8090. From your computer:
@@ -77,4 +86,6 @@ Sign in with the admin token:
 Before the first agent, put a model key in /etc/pac/gateway.env and set the model in /etc/pac/gateway.toml:
     incus exec --project pac pac-gw -- sh -c 'echo PAC_MODEL_GPT_KEY=... >> /etc/pac/gateway.env'
     incus exec --project pac pac-gw -- systemctl restart pac-gateway
+Or work from this host's terminal:
+    pac create assistant && pac send assistant "Open a browser and tell me today's top headline"
 MSG

@@ -113,7 +113,7 @@ class AgentSession:
             self.touch()
 
     # -- events (may be called from the worker thread) -----------------------------------------
-    def emit(self, kind: str, data) -> None:
+    def emit(self, kind: str, data) -> dict:
         if kind == "screenshot":
             self.rt.store.save_screen(self.id, data)
             data = {}
@@ -122,6 +122,7 @@ class AgentSession:
             self.rt.store.save_history(self.id, self.adapter.state())
         ev = self.rt.store.add_event(self.id, kind, data)
         self.rt.loop.call_soon_threadsafe(self._fanout, ev)
+        return ev
 
     def _fanout(self, ev: dict) -> None:
         for q in list(self.subscribers):
@@ -136,14 +137,16 @@ class AgentSession:
     def touch(self) -> None:
         self.last_active = time.time()
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str) -> int:
+        """Queue a message for the agent; returns its event id."""
         self.touch()
-        self.emit("user", {"text": text})
+        ev = self.emit("user", {"text": text})
         await self.queue.put(text)
         if self.taken_over:
             self.emit("notice", {"text": "The agent will read this when you hand the computer back."})
         elif self.worker is None or self.worker.done():
             self.worker = asyncio.create_task(self._work())
+        return ev["id"]
 
     def interrupt(self) -> None:
         self.stop_requested = True
@@ -205,15 +208,16 @@ class AgentSession:
             self.emit("status", {"status": self.row["status"]})
         self.touch()
 
-    def sleep(self, how: str) -> None:
+    def sleep(self, how: str, idle: bool = True) -> None:
         """Pause or stop the computer (blocking; call from a worker thread)."""
         self.close_computer()
+        why = "The computer was idle and has" if idle else "The computer has"
         if how == "stopped":
             self.rt.manager.stop(self.row["vm"])
-            self.emit("notice", {"text": "The computer was idle and has been shut down. A new message wakes it."})
+            self.emit("notice", {"text": f"{why} been shut down. A new message wakes it."})
         else:
             self.rt.manager.pause(self.row["vm"])
-            self.emit("notice", {"text": "The computer was idle and has been paused."})
+            self.emit("notice", {"text": f"{why} been paused. A new message wakes it."})
         self.sleep_state = how
         self.emit("status", {"status": "asleep"})
 
