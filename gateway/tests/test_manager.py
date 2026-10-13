@@ -24,6 +24,13 @@ class Argv(unittest.TestCase):
         self.assertEqual(remote[0], "incus")
         self.assertIn("cloud-init.user-data=#cloud-config\n{\"a\": 1}", remote)
 
+    def test_remote_launch_takes_the_image_from_the_remote(self):
+        m = IncusManager(remote="host", project="pac", image="pac-desktop/dev")
+        seen = []
+        m._run = lambda *args, **kw: seen.append(args) or ""
+        m.create("pac-x", "CA")
+        self.assertEqual(seen[0][:3], ("launch", "host:pac-desktop/dev", "host:pac-x"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -75,7 +75,8 @@ class IncusManager:
                              "permissions": "0644"}],
             "runcmd": [["sh", "-c", "/usr/local/sbin/pac-trust-ca < /usr/local/share/pac/gateway-ca.pem"]],
         })
-        self._run("launch", self.image, self._target(name), "--vm",
+        image = f"{self.remote}:{self.image}" if self.remote and ":" not in self.image else self.image
+        self._run("launch", image, self._target(name), "--vm",
                   "-c", f"limits.cpu={self.cpu}", "-c", f"limits.memory={self.memory}",
                   "-c", "security.secureboot=false", "-c", "migration.stateful=true",
                   "-c", f"cloud-init.user-data={user_data}",
