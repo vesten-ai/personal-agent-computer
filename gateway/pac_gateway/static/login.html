@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Agent Computer</title>
+<style>
+  :root { --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --line: #e4e3df; --accent: #2f5bd3; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --panel: #1f1f1d; --text: #ececea; --line: #33332f; --accent: #8aa8ff; } }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  form { display: grid; gap: 10px; width: min(340px, calc(100vw - 32px)); }
+  input, button { font: inherit; padding: 9px 12px; border-radius: 8px; }
+  input { border: 1px solid var(--line); background: var(--panel); color: inherit; }
+  button { border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <strong>Personal Agent Computer</strong>
+  <input type="password" name="token" placeholder="Admin token" autocomplete="current-password" required autofocus>
+  <button>Sign in</button>
+</form>
+</body>
+</html>

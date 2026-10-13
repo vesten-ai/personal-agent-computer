@@ -55,7 +55,7 @@ apt-get install -y -qq --no-install-recommends \
   at-spi2-core libatk-adaptor libatk-bridge2.0-0 \
   fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji fonts-crosextra-carlito fonts-crosextra-caladea \
   fcitx5 fcitx5-chinese-addons fcitx5-mozc fcitx5-frontend-gtk3 fcitx5-frontend-qt5 im-config \
-  x11vnc xdg-utils libnss3-tools >/dev/null
+  x11vnc socat xdg-utils libnss3-tools >/dev/null
 
 log "Chromium from the xtradeb PPA (Ubuntu's chromium-browser is a snap shim)"
 add-apt-repository -y ppa:xtradeb/apps >/dev/null
@@ -108,8 +108,10 @@ rm -rf "$tmp"
 runuser -u "$AGENT" -- env HOME=/home/$AGENT cua-driver telemetry disable >/dev/null
 runuser -u "$AGENT" -- env HOME=/home/$AGENT cua-driver telemetry status --json | jq -e '.enabled == false' >/dev/null
 
-log "pac-computerd (pushed next to this script by image/build.sh)"
+log "pac-computerd and pac-trust-ca (pushed next to this script by image/build.sh)"
 install -m 0755 "$(dirname "$0")/computerd.py" /usr/local/bin/pac-computerd
+# Run once per VM at first boot (cloud-init), with the gateway's CA on stdin.
+install -m 0755 "$(dirname "$0")/trust-gateway-ca.sh" /usr/local/sbin/pac-trust-ca
 
 log "desktop session as agent's systemd user services"
 units=/home/$AGENT/.config/systemd/user

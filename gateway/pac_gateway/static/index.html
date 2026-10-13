@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Agent Computer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e4e3df;
+    --accent: #2f5bd3; --user: #eef2fd; --warn: #a15c00; --err: #b3261e;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #1f1f1d; --text: #ececea; --muted: #9a9a94; --line: #33332f;
+            --accent: #8aa8ff; --user: #23283a; --warn: #e3a64a; --err: #ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  .app { display: grid; grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1.1fr); height: 100dvh; }
+  aside, main, section { min-height: 0; }
+  aside { border-right: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  aside h1 { font-size: 15px; margin: 0; }
+  .agents { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+  .agents li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  .agents li.on { background: var(--user); }
+  .agents .st { color: var(--muted); font-size: 12px; }
+  form.new { display: flex; gap: 6px; }
+  input, textarea, select, button { font: inherit; color: inherit; }
+  input, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  main { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+  .log { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--user); border-color: transparent; }
+  .msg.think { color: var(--muted); font-size: 13px; border-style: dashed; }
+  .msg.act { font: 12px/1.4 var(--mono); color: var(--muted); background: transparent; }
+  .msg.notice { color: var(--warn); font-size: 13px; background: transparent; border: 0; padding: 0 4px; }
+  .msg.error { color: var(--err); }
+  .compose { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+  .compose textarea { resize: none; height: 44px; }
+  section { display: flex; flex-direction: column; padding: 16px; gap: 8px; }
+  .screen { width: 100%; aspect-ratio: 16 / 10; background: #000; border-radius: 8px; object-fit: contain; }
+  .screen[hidden] { display: none; }
+  .placeholder { display: grid; place-items: center; color: #8a8a85; font-size: 13px; }
+  .bar { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); margin: auto; text-align: center; }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    .agents { display: flex; gap: 6px; overflow-x: auto; }
+    section { order: -1; padding: 8px 16px; }
+    main { border-right: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Personal Agent Computer</h1>
+    <ul class="agents" id="agents"></ul>
+    <form class="new" id="new">
+      <input id="newname" placeholder="New agent name" maxlength="40" required>
+      <button>Add</button>
+    </form>
+  </aside>
+  <main>
+    <div class="log" id="log"><p class="empty">Add an agent to give it a computer.</p></div>
+    <form class="compose" id="compose">
+      <textarea id="text" placeholder="Tell your agent what to do" disabled></textarea>
+      <button id="send" disabled>Send</button>
+      <button id="stop" class="ghost" type="button" hidden>Stop</button>
+    </form>
+  </main>
+  <section>
+    <div class="bar"><span id="title">No agent selected</span><span id="status"></span></div>
+    <img class="screen" id="screen" alt="The agent's screen" hidden>
+    <div class="screen placeholder" id="noscreen">No screenshot yet</div>
+  </section>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let agents = [], current = null, ws = null, lastId = 0;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+
+async function loadAgents() {
+  const data = await api("/api/agents");
+  agents = data.agents;
+  const ul = $("agents");
+  ul.replaceChildren(...agents.map((a) => {
+    const li = document.createElement("li");
+    li.className = a.id === current ? "on" : "";
+    li.innerHTML = `<span></span><span class="st"></span>`;
+    li.firstChild.textContent = a.name;
+    li.lastChild.textContent = a.busy ? "working" : a.status;
+    li.onclick = () => select(a.id);
+    return li;
+  }));
+  if (!current && agents.length) select(agents[0].id);
+}
+
+function add(ev) {
+  if (ev.id <= lastId) return;
+  lastId = ev.id;
+  const log = $("log");
+  const d = ev.data || {};
+  let cls = null, text = null;
+  switch (ev.kind) {
+    case "user": cls = "user"; text = d.text; break;
+    case "text": cls = ""; text = d; break;
+    case "thinking": cls = "think"; text = d; break;
+    case "actions": cls = "act"; text = (d || []).join("\n"); break;
+    case "notice": cls = "notice"; text = d.text; break;
+    case "error": cls = "error"; text = d.text; break;
+    case "screenshot": $("screen").src = `/api/agents/${current}/screen.png?t=${ev.id}`; return;
+    case "status": setStatus(d.status); return;
+  }
+  if (text == null || text === "") return;
+  log.querySelector(".empty")?.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  if (ev.kind === "text") div.innerHTML = inline(text); else div.textContent = text;
+  log.append(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// Just enough Markdown for chat replies: **bold** and `code`, on HTML-escaped text.
+function inline(t) {
+  const esc = t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  return esc.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function setStatus(s) {
+  $("status").textContent = s;
+  $("stop").hidden = s !== "working";
+  const ready = s === "ready" || s === "working";
+  $("text").disabled = $("send").disabled = !ready;
+  loadAgents();
+}
+
+async function select(id) {
+  current = id; lastId = 0;
+  ws?.close();
+  const a = agents.find((x) => x.id === id);
+  $("title").textContent = a ? `${a.name} · ${a.model}` : "";
+  $("log").replaceChildren();
+  $("screen").src = `/api/agents/${id}/screen.png?t=${Date.now()}`;
+  const { events } = await api(`/api/agents/${id}/events`);
+  events.forEach(add);
+  setStatus(a.busy ? "working" : a.status);
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/agents/${id}/ws`);
+  ws.onmessage = (m) => add(JSON.parse(m.data));
+  ws.onclose = () => { if (current === id) setTimeout(() => current === id && select(id), 2000); };
+}
+
+$("new").onsubmit = async (e) => {
+  e.preventDefault();
+  const a = await api("/api/agents", { method: "POST", body: JSON.stringify({ name: $("newname").value }) });
+  $("newname").value = "";
+  await loadAgents();
+  select(a.id);
+};
+$("compose").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text || !ws) return;
+  ws.send(JSON.stringify({ type: "message", text }));
+  $("text").value = "";
+};
+$("text").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("compose").requestSubmit(); } };
+$("stop").onclick = () => ws?.send(JSON.stringify({ type: "stop" }));
+$("screen").onload = () => { $("screen").hidden = false; $("noscreen").hidden = true; };
+$("screen").onerror = () => { $("screen").hidden = true; $("noscreen").hidden = false; };
+loadAgents();
+</script>
+</body>
+</html>

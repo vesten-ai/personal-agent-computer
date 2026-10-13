@@ -17,8 +17,6 @@ import time
 from ..computer import Computer, ComputerError
 from ..http import post_json
 
-API = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/responses"
-
 # The model emits upper-case key names; computerd takes xdotool names.
 KEYS = {"ENTER": "Return", "RETURN": "Return", "ESC": "Escape", "ESCAPE": "Escape", "TAB": "Tab",
         "SPACE": "space", "BACKSPACE": "BackSpace", "DELETE": "Delete", "DEL": "Delete",
@@ -97,18 +95,58 @@ def execute(computer: Computer, a: dict) -> str:
         pass  # every call is answered with a fresh screenshot anyway
     else:
         raise ComputerError(f"unsupported computer action {t!r}")
-    return f"{t} {({k: v for k, v in a.items() if k != 'type'})}"
+    return describe(a)
+
+
+def describe(a: dict) -> str:
+    """One readable line per action, for the chat transcript."""
+    t = a.get("type")
+    mods = "+".join(_key(k) for k in a.get("keys") or []) if t != "keypress" else ""
+    held = f" with {mods}" if mods else ""
+    if t == "click":
+        return f"click {a.get('button', 'left')} at ({a.get('x')}, {a.get('y')}){held}"
+    if t == "double_click":
+        return f"double-click at ({a.get('x')}, {a.get('y')}){held}"
+    if t == "drag":
+        p = a.get("path") or [{}]
+        return f"drag ({p[0].get('x')}, {p[0].get('y')}) to ({p[-1].get('x')}, {p[-1].get('y')}){held}"
+    if t == "move":
+        return f"move to ({a.get('x')}, {a.get('y')})"
+    if t == "scroll":
+        return f"scroll ({a.get('scroll_x', 0)}, {a.get('scroll_y', 0)}) at ({a.get('x')}, {a.get('y')}){held}"
+    if t == "keypress":
+        return "key " + "+".join(_key(k) for k in a.get("keys") or [])
+    if t == "type":
+        return f"type {a.get('text', '')!r}"
+    if t == "screenshot":
+        return "look at the screen"
+    return t or "?"
 
 
 class OpenAIComputerAgent:
     def __init__(self, model: str = "gpt-6.1-sol", effort: str = "medium", api_key: str | None = None,
-                 system: str = "", log=print, tool_mode: str = "native"):
+                 system: str = "", log=print, tool_mode: str = "native", on_event=None, should_stop=None,
+                 base_url: str | None = None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
+        self.on_event, self.should_stop = on_event, should_stop
         self.tool_mode = tool_mode
+        self.api = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/") + "/responses"
         self.cache_key = f"pac-{os.getpid()}-{int(time.time())}"
         self.api_key = api_key or os.environ["OPENAI_API_KEY"]
         self.items: list[dict] = []
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+
+    def state(self) -> dict:
+        return {"items": self.items, "usage": self.usage, "cache_key": self.cache_key}
+
+    def load(self, state: dict) -> None:
+        self.items = state.get("items", [])
+        self.usage.update(state.get("usage", {}))
+        self.cache_key = state.get("cache_key", self.cache_key)
+
+    def _emit(self, kind: str, data) -> None:
+        if self.on_event:
+            self.on_event(kind, data)
 
     def _request(self) -> dict:
         body = {
@@ -123,12 +161,14 @@ class OpenAIComputerAgent:
         }
         if self.system:
             body["instructions"] = self.system
-        return post_json(API, {"authorization": f"Bearer {self.api_key}"}, body)
+        return post_json(self.api, {"authorization": f"Bearer {self.api_key}"}, body)
 
     def run(self, task: str, computer: Computer, max_steps: int = 40) -> dict:
         self.items.append({"role": "user", "content": [{"type": "input_text", "text": task}]})
         steps = []
         for step in range(1, max_steps + 1):
+            if self.should_stop and self.should_stop():
+                return {"stop_reason": "interrupted", "final": "", "steps": steps, "usage": self.usage}
             t0 = time.time()
             resp = self._request()
             dt = time.time() - t0
@@ -142,10 +182,12 @@ class OpenAIComputerAgent:
                 if o["type"] == "reasoning":
                     for s in o.get("summary") or []:
                         self.log(f"  [{step}] reasoning: {s.get('text', '')[:200]}")
+                        self._emit("thinking", s.get("text", ""))
                 elif o["type"] == "message":
                     for c in o.get("content") or []:
                         if c.get("type") == "output_text":
                             self.log(f"  [{step}] text: {c['text'][:300]}")
+                            self._emit("text", c["text"])
             calls = [o for o in output if o["type"] == "computer_call"
                      or (o["type"] == "function_call" and o.get("name") == "computer")]
             if not calls:
@@ -168,13 +210,15 @@ class OpenAIComputerAgent:
                         actions.append(execute(computer, a))
                     except Exception as e:
                         # The tool has no error result; the screenshot below shows the model what happened.
-                        actions.append(f"{a.get('type')} FAILED: {e}")
+                        actions.append(f"{describe(a)} failed: {e}")
                         break
                 checks = call.get("pending_safety_checks") or []
                 if checks:
                     # Spike only: a real gateway pauses here and asks the person before acknowledging.
                     self.log(f"  [{step}] safety checks auto-acknowledged: {[c.get('code') for c in checks]}")
-                shot = base64.b64encode(computer.screenshot()).decode()
+                png = computer.screenshot()
+                self._emit("screenshot", png)
+                shot = base64.b64encode(png).decode()
                 if call["type"] == "function_call":
                     self.items.append({"type": "function_call_output", "call_id": call["call_id"], "output": [
                         {"type": "input_text", "text": "Done. Screenshot after the actions:"},
@@ -186,6 +230,7 @@ class OpenAIComputerAgent:
                 if checks:
                     out["acknowledged_safety_checks"] = checks
                 self.items.append(out)
+            self._emit("actions", actions)
             steps.append({"step": step, "model_s": round(dt, 2), "exec_s": round(time.time() - t1, 2),
                           "actions": actions})
             self.log(f"  [{step}] model {dt:.1f}s, {len(actions)} action(s): " + " | ".join(x[:120] for x in actions))

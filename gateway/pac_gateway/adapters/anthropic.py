@@ -17,7 +17,6 @@ import time
 from ..computer import Computer, ComputerError
 from ..http import post_json
 
-API = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/") + "/v1/messages"
 NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
 BUTTON = {"left_click": "left", "right_click": "right", "middle_click": "middle",
           "double_click": "left", "triple_click": "left"}
@@ -72,13 +71,51 @@ def execute(computer: Computer, name: str, a: dict) -> list[dict]:
     return [{"type": "text", "text": "OK"}]
 
 
+def describe(name: str, a: dict) -> str:
+    """One readable line per toolset call, for the chat transcript."""
+    xy = a.get("coordinate")
+    at = f" at ({xy[0]}, {xy[1]})" if xy else ""
+    held = f" with {a['text']}" if a.get("text") and name not in ("type", "key", "hold_key") else ""
+    if name in BUTTON:
+        return f"{name.replace('_', ' ')}{at}{held}"
+    if name == "left_click_drag":
+        s = a.get("start_coordinate") or ["?", "?"]
+        return f"drag ({s[0]}, {s[1]}){' to' + at[3:] if at else ''}{held}"
+    if name == "scroll":
+        return f"scroll {a.get('scroll_direction')} {a.get('scroll_amount', 3)}{at}{held}"
+    if name == "type":
+        return f"type {a.get('text', '')!r}"
+    if name == "key":
+        return f"key {a.get('text')}" + (f" x{a['repeat']}" if a.get("repeat", 1) != 1 else "")
+    if name == "zoom":
+        return f"zoom into {a.get('region')}"
+    if name == "screenshot":
+        return "look at the screen"
+    if name == "mouse_move":
+        return f"move{at}"
+    return name.replace("_", " ") + at
+
+
 class AnthropicComputerAgent:
     def __init__(self, model: str = "claude-opus-5-5", effort: str = "medium", api_key: str | None = None,
-                 system: str = "", log=print):
+                 system: str = "", log=print, on_event=None, should_stop=None, base_url: str | None = None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
+        self.api = (base_url or os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")).rstrip("/") + "/v1/messages"
+        self.on_event, self.should_stop = on_event, should_stop
         self.api_key = api_key or os.environ["ANTHROPIC_API_KEY"]
         self.messages: list[dict] = []
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
+
+    def state(self) -> dict:
+        return {"messages": self.messages, "usage": self.usage}
+
+    def load(self, state: dict) -> None:
+        self.messages = state.get("messages", [])
+        self.usage.update(state.get("usage", {}))
+
+    def _emit(self, kind: str, data) -> None:
+        if self.on_event:
+            self.on_event(kind, data)
 
     def _request(self) -> dict:
         body = {
@@ -96,12 +133,19 @@ class AnthropicComputerAgent:
             body["system"] = self.system
         headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
                    "anthropic-beta": "server-side-fallback-2026-07-01"}
-        return post_json(API, headers, body)
+        return post_json(self.api, headers, body)
 
     def run(self, task: str, computer: Computer, max_steps: int = 40) -> dict:
-        self.messages.append({"role": "user", "content": [{"type": "text", "text": task}]})
+        text = {"type": "text", "text": task}
+        if self.messages and self.messages[-1]["role"] == "user":
+            # An interrupted turn ends with tool results the API hasn't seen yet; add to that message.
+            self.messages[-1]["content"].append(text)
+        else:
+            self.messages.append({"role": "user", "content": [text]})
         steps = []
         for step in range(1, max_steps + 1):
+            if self.should_stop and self.should_stop():
+                return {"stop_reason": "interrupted", "final": "", "steps": steps, "usage": self.usage}
             t0 = time.time()
             resp = self._request()
             dt = time.time() - t0
@@ -112,8 +156,10 @@ class AnthropicComputerAgent:
             for b in content:
                 if b["type"] == "thinking" and b.get("thinking"):
                     self.log(f"  [{step}] thinking: {b['thinking'][:200]}")
+                    self._emit("thinking", b["thinking"])
                 elif b["type"] == "text":
                     self.log(f"  [{step}] text: {b['text'][:300]}")
+                    self._emit("text", b["text"])
             calls = [b for b in content if b["type"] == "tool_use"]
             stop = resp.get("stop_reason")
             if stop != "tool_use" or not calls:
@@ -131,16 +177,21 @@ class AnthropicComputerAgent:
                     out = execute(computer, b["name"], b.get("input", {}))
                     results.append({"type": "tool_result", "tool_use_id": b["id"], "toolset_name": "computer",
                                     "content": out})
-                    actions.append(f"{b['name']} {b.get('input', {})}")
+                    actions.append(describe(b["name"], b.get("input", {})))
                 except Exception as e:
                     failed = True
                     results.append({"type": "tool_result", "tool_use_id": b["id"], "toolset_name": "computer",
                                     "is_error": True, "content": f"Error: {e}"})
-                    actions.append(f"{b['name']} FAILED: {e}")
+                    actions.append(f"{describe(b['name'], b.get('input', {}))} failed: {e}")
             # A batch that doesn't end with a screenshot gets one attached, so the model can verify.
             if not failed and calls[-1]["name"] not in ("screenshot", "zoom"):
                 results[-1]["content"] = results[-1]["content"] + [_image(computer.screenshot())]
             self.messages.append({"role": "user", "content": results})
+            self._emit("actions", actions)
+            last_image = next((c for r in reversed(results) if isinstance(r["content"], list)
+                               for c in reversed(r["content"]) if c.get("type") == "image"), None)
+            if last_image:
+                self._emit("screenshot", base64.b64decode(last_image["source"]["data"]))
             steps.append({"step": step, "model_s": round(dt, 2), "exec_s": round(time.time() - t1, 2),
                           "actions": actions})
             self.log(f"  [{step}] model {dt:.1f}s, {len(calls)} action(s): " + " | ".join(a[:120] for a in actions))
