@@ -30,6 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install "./gateway[egress]"
+      - run: python -m unittest discover -s gateway/egress -p 'test_*.py' -v
       - run: bash gateway/egress/test_local.sh
 
   shell:
