@@ -51,9 +51,20 @@ devices:
     security.ipv4_filtering: "true"
 YAML
 incus profile show gateway --project pac >/dev/null 2>&1 || incus profile create gateway --project pac
+# The DHCP options above point every client at the gateway, so the gateway itself gets a
+# static configuration that routes through the host bridge instead.
 incus profile edit gateway --project pac <<YAML
 description: Personal Agent Computer gateway
-config: {}
+config:
+  cloud-init.network-config: |
+    network:
+      version: 2
+      ethernets:
+        eth0:
+          dhcp4: false
+          addresses: [$GW_IP/24]
+          routes: [{to: default, via: $SUBNET.1}]
+          nameservers: {addresses: [$SUBNET.1]}
 devices:
   root: {type: disk, path: /, pool: $POOL}
   eth0:
@@ -61,8 +72,9 @@ devices:
     network: pac-br0
     name: eth0
     ipv4.address: $GW_IP
+    # No ipv4_filtering here: the gateway answers transparently-proxied connections with the
+    # original destination as source address, which IP filtering would drop as spoofed.
     security.mac_filtering: "true"
-    security.ipv4_filtering: "true"
 YAML
 incus profile show build --project pac >/dev/null 2>&1 || incus profile create build --project pac
 incus profile edit build --project pac <<YAML

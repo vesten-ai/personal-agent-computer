@@ -65,6 +65,8 @@ def main() -> int:
     ap.add_argument("--anthropic-model", default="claude-opus-5-5")
     ap.add_argument("--openai-model", default="gpt-6.1-sol")
     ap.add_argument("--effort", default="medium")
+    ap.add_argument("--openai-tool", choices=["native", "function"], default="native",
+                    help="native = built-in computer tool; function = the same actions as a function tool")
     ap.add_argument("--out", default="spike3-results.json")
     args = ap.parse_args()
 
@@ -78,7 +80,7 @@ def main() -> int:
             if name == "anthropic":
                 agent = AnthropicComputerAgent(model=args.anthropic_model, effort=args.effort)
             else:
-                agent = OpenAIComputerAgent(model=args.openai_model, effort=args.effort)
+                agent = OpenAIComputerAgent(model=args.openai_model, effort=args.effort, tool_mode=args.openai_tool)
             t0 = time.time()
             try:
                 out = agent.run(TASK.format(tag=tag), c)
@@ -87,6 +89,7 @@ def main() -> int:
             out["wall_s"] = round(time.time() - t0, 1)
             out["verify"] = verify(c, tag)
             out["adapter"], out["model"] = name, agent.model
+            out["tool_mode"] = getattr(agent, "tool_mode", "native")
             print(json.dumps({k: out[k] for k in ("stop_reason", "final", "wall_s", "verify")}, ensure_ascii=False, indent=2))
             runs.append(out)
         finally:

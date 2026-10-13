@@ -1,0 +1,16 @@
+[
+  {
+    "stop_reason": "error",
+    "final": "",
+    "error": "HTTP 400: {\"error\":{\"message\":\"Unsupported tool type: computer\",\"type\":\"invalid_request_error\",\"param\":\"\",\"code\":null}}",
+    "steps": [],
+    "wall_s": 2.5,
+    "verify": {
+      "file_matches": false,
+      "file_content": "",
+      "mousepad_closed": true
+    },
+    "adapter": "openai",
+    "model": "gpt-6.1-sol"
+  }
+]

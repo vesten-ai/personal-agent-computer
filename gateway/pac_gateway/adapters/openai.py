@@ -1,4 +1,4 @@
-"""OpenAI Responses API adapter: the GA `computer` tool.
+"""OpenAI Responses API adapter: the GA `computer` tool, or the same actions as a function tool.
 
 Wire rules this follows (developers.openai.com computer-use guide, 2026-10):
   - tools entry is {"type": "computer"}: no display size; coordinates are in screenshot pixels.
@@ -9,6 +9,7 @@ Wire rules this follows (developers.openai.com computer-use guide, 2026-10):
 """
 
 import base64
+import json
 import os
 import re
 import time
@@ -35,6 +36,34 @@ def _key(k: str) -> str:
     if re.fullmatch(r"F\d{1,2}", u):
         return u
     return k.lower() if len(k) == 1 else k
+
+
+_ACTION = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "enum": ["click", "double_click", "drag", "move", "scroll", "keypress",
+                                            "type", "wait", "screenshot"]},
+        "x": {"type": "integer"}, "y": {"type": "integer"},
+        "button": {"type": "string", "enum": ["left", "right", "wheel", "back", "forward"]},
+        "keys": {"type": "array", "items": {"type": "string"},
+                 "description": "keypress: the chord, e.g. [\"CTRL\", \"S\"]; mouse actions: modifiers held"},
+        "text": {"type": "string"},
+        "scroll_x": {"type": "integer"}, "scroll_y": {"type": "integer"},
+        "path": {"type": "array", "items": {"type": "object", "properties": {"x": {"type": "integer"},
+                                                                              "y": {"type": "integer"}},
+                                            "required": ["x", "y"]}},
+    },
+    "required": ["type"],
+}
+FUNCTION_TOOL = {
+    "type": "function",
+    "name": "computer",
+    "description": "Operate the Linux desktop. Runs the actions in order, then returns a screenshot of the "
+                   "whole screen. Coordinates are pixels of that screenshot. Use [{\"type\": \"screenshot\"}] "
+                   "to just look. scroll_x/scroll_y are in pixels (100 = one wheel notch).",
+    "parameters": {"type": "object", "properties": {"actions": {"type": "array", "items": _ACTION}},
+                   "required": ["actions"]},
+}
 
 
 def _clicks(delta) -> int:
@@ -73,8 +102,10 @@ def execute(computer: Computer, a: dict) -> str:
 
 class OpenAIComputerAgent:
     def __init__(self, model: str = "gpt-6.1-sol", effort: str = "medium", api_key: str | None = None,
-                 system: str = "", log=print):
+                 system: str = "", log=print, tool_mode: str = "native"):
         self.model, self.effort, self.system, self.log = model, effort, system, log
+        self.tool_mode = tool_mode
+        self.cache_key = f"pac-{os.getpid()}-{int(time.time())}"
         self.api_key = api_key or os.environ["OPENAI_API_KEY"]
         self.items: list[dict] = []
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
@@ -82,11 +113,13 @@ class OpenAIComputerAgent:
     def _request(self) -> dict:
         body = {
             "model": self.model,
-            "tools": [{"type": "computer"}],
+            "tools": [{"type": "computer"}] if self.tool_mode == "native" else [FUNCTION_TOOL],
             "input": self.items,
             "store": False,
             "include": ["reasoning.encrypted_content"],
             "reasoning": {"effort": self.effort, "summary": "auto"},
+            # Stateless requests resend the whole history; a stable key lets the provider reuse its prefix cache.
+            "prompt_cache_key": self.cache_key,
         }
         if self.system:
             body["instructions"] = self.system
@@ -113,7 +146,8 @@ class OpenAIComputerAgent:
                     for c in o.get("content") or []:
                         if c.get("type") == "output_text":
                             self.log(f"  [{step}] text: {c['text'][:300]}")
-            calls = [o for o in output if o["type"] == "computer_call"]
+            calls = [o for o in output if o["type"] == "computer_call"
+                     or (o["type"] == "function_call" and o.get("name") == "computer")]
             if not calls:
                 final = "".join(c.get("text", "") for o in output if o["type"] == "message"
                                 for c in o.get("content") or [] if c.get("type") == "output_text")
@@ -122,7 +156,14 @@ class OpenAIComputerAgent:
             t1 = time.time()
             actions = []
             for call in calls:
-                for a in call.get("actions") or ([call["action"]] if call.get("action") else []):
+                if call["type"] == "function_call":
+                    try:
+                        batch = json.loads(call.get("arguments") or "{}").get("actions") or []
+                    except json.JSONDecodeError as e:
+                        batch, actions = [], actions + [f"bad arguments: {e}"]
+                else:
+                    batch = call.get("actions") or ([call["action"]] if call.get("action") else [])
+                for a in batch:
                     try:
                         actions.append(execute(computer, a))
                     except Exception as e:
@@ -134,6 +175,11 @@ class OpenAIComputerAgent:
                     # Spike only: a real gateway pauses here and asks the person before acknowledging.
                     self.log(f"  [{step}] safety checks auto-acknowledged: {[c.get('code') for c in checks]}")
                 shot = base64.b64encode(computer.screenshot()).decode()
+                if call["type"] == "function_call":
+                    self.items.append({"type": "function_call_output", "call_id": call["call_id"], "output": [
+                        {"type": "input_text", "text": "Done. Screenshot after the actions:"},
+                        {"type": "input_image", "image_url": f"data:image/png;base64,{shot}"}]})
+                    continue
                 out = {"type": "computer_call_output", "call_id": call["call_id"],
                        "output": {"type": "computer_screenshot", "image_url": f"data:image/png;base64,{shot}",
                                   "detail": "original"}}
