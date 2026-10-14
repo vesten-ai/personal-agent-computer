@@ -40,3 +40,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: git ls-files '*.sh' | xargs shellcheck -S warning
       - run: bash host/test-readiness.sh
+      - run: python3 host/test-network.py

@@ -36,8 +36,17 @@ It creates an Incus project `pac` with:
 | image `pac-desktop/dev` | Ubuntu 24.04, XFCE, Chromium, LibreOffice, CJK fonts and input methods, the computer-use daemon |
 | container `pac-gw` (10.96.10.2) | egress proxy and gateway service. Its Incus certificate is restricted to project `pac` |
 
-The default ranges must be available. Custom subnets are not yet supported end to end: some
-gateway configuration still assumes 10.96.10.0/24. Do not change only the host subnet variables.
+The default ranges must be available. For a fresh installation, choose different /24 prefixes if needed:
+
+```bash
+sudo env PAC_SUBNET=10.88.10 PAC_BUILD_SUBNET=10.88.11 ./install.sh
+```
+
+The installer passes these values to gateway DNS, NTP, firewall rules and the Incus API connection.
+Repeat the same values on every rerun. Preflight rejects invalid prefixes, identical networks, and
+existing PAC bridges with different addresses before setup changes them. Automatic migration of an
+existing installation to another subnet is not supported. Custom-subnet configuration has offline
+coverage; a clean-host live acceptance run is still pending.
 
 ## First agent
 

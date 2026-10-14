@@ -16,6 +16,8 @@ SUBNET=${PAC_SUBNET:-10.96.10}          # agent bridge, /24
 BUILD_SUBNET=${PAC_BUILD_SUBNET:-10.96.11}
 GW_IP="$SUBNET.2"
 POOL=${PAC_POOL:-default}
+HERE=$(cd "$(dirname "$0")" && pwd)
+python3 "$HERE/check-network.py" "$SUBNET" "$BUILD_SUBNET"
 
 incus project show pac >/dev/null 2>&1 || incus project create pac \
   -c features.images=false -c features.profiles=true \

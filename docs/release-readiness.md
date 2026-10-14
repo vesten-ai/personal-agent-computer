@@ -13,7 +13,8 @@ is part of this preparation. Existing vesten-ai links remain canonical until a n
 - DNS: queries logged and names rate-limited; this reduces bandwidth, not a data-loss prevention guarantee.
 - Approvals depend on model behavior; they are not an enforcement boundary.
 - Installation: existing-host reruns tested. Clean-host acceptance, including first boot and a stopped
-  gateway retry, remains required. Custom subnets need propagation through all generated configuration.
+  gateway retry, remains required. Custom subnet values now propagate to gateway installation;
+  preflight and offline checks cover invalid/conflicting configuration, with live acceptance pending.
 - No prebuilt image is accepted for distribution. No VM backup/restore or concurrency capacity claim.
 
 Before release, select the canonical namespace, verify links and private reporting availability,
