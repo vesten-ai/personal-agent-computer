@@ -386,6 +386,12 @@ class Runtime:
         model = model or self.cfg.default_model
         if model not in self.cfg.models:
             raise ValueError(f"unknown model {model!r}")
+        # Reject an unconfigured model before persisting a row. Otherwise session construction
+        # fails, leaving a 'creating' agent that also prevents the next gateway startup.
+        try:
+            self.cfg.models[model].api_key
+        except RuntimeError as e:
+            raise ValueError(str(e)) from None
         row = self.store.create_agent(name, model)
         session = AgentSession(self, row)
         self.sessions[row["id"]] = session
