@@ -34,7 +34,7 @@ def prepare(output, ref='HEAD'):
         if path.name == '.env' or path.name.endswith(('.db', '.sqlite', '.sqlite3', '.pem', '.key')) or path.name in {'auth.json', 'history.json', 'gateway.env'}:
             raise ValueError(f'sensitive/runtime file tracked: {name}')
         content = git('cat-file', 'blob', oid)
-        if re.search(rb'(?:sk-ant-(?:api\d+|usr)-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|/Users/[^/\s]+/)', content):
+        if re.search(rb'(?:sk-ant-(?:api\d+|usr)-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|/Users' rb'/[^/\s]+/)', content):
             raise ValueError(f'credential or personal path marker in: {name}')
         files[name] = (content, int(mode, 8) & 0o777)
     required = ['LICENSE', 'README.md', 'install.sh', 'host/setup.sh', 'image/provision.sh',
