@@ -26,4 +26,6 @@ incus stop "${P[@]}" "$VM"
 incus image delete "$ALIAS" >/dev/null 2>&1 || true
 time incus publish "${P[@]}" "$VM" --alias "$ALIAS" --compression zstd \
   description="Personal Agent Computer desktop ($(date -u +%Y-%m-%d))"
+# incus publish gives the image an expiry date (a month out); agents are created from it, so it must stay.
+incus image show "$ALIAS" | sed 's/^expires_at: .*/expires_at: 1970-01-01T00:00:00Z/' | incus image edit "$ALIAS"
 incus image info "$ALIAS" | grep -E 'Fingerprint|Size'

@@ -79,6 +79,11 @@ The full guide, including credentials and connectors, is in [docs/install.md](do
 | `spikes/` | The experiments that settled the design, with their findings |
 | `docs/` | Install guide and design notes |
 
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 [Apache License 2.0](LICENSE)

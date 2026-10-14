@@ -21,6 +21,8 @@ import unicodedata
 import urllib.error
 import urllib.request
 
+from . import __version__
+
 CONFIG = "/etc/pac/gateway.toml"
 ENV_FILE = "/etc/pac/gateway.env"
 
@@ -135,6 +137,7 @@ def follow(gw: Gateway, agent: dict, after: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pac", description="Manage Personal Agent Computer agents.")
+    ap.add_argument("--version", action="version", version=f"pac {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="agents and their state")
     p = sub.add_parser("create", help="create an agent and wait for its computer")
