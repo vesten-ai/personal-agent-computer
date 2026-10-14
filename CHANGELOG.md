@@ -27,5 +27,6 @@ First release. One Incus host runs a gateway and one desktop VM per agent.
   the person.
 - **Install**: `install.sh` sets up a fresh Incus host and is safe to re-run.
 
-Known gaps: Claude computer use and OpenAI's built-in computer tool have been tested offline only,
-and there is one admin token, no multi-user accounts.
+Tested live with Claude Opus 5.5 and with GPT through an OpenAI-compatible relay. Known gaps:
+OpenAI's built-in computer tool has been tested offline only, and there is one admin token, no
+multi-user accounts.

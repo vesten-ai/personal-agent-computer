@@ -14,6 +14,7 @@ class ModelConfig:
     base_url: str | None = None
     tool_mode: str = "native"  # openai only: "native" computer tool or "function"
     effort: str = "medium"
+    workspace_id: str | None = None  # anthropic only: for keys not scoped to a workspace
 
     @property
     def api_key(self) -> str:

@@ -100,15 +100,17 @@ def describe(name: str, a: dict) -> str:
 class AnthropicComputerAgent:
     def __init__(self, model: str = "claude-opus-5-5", effort: str = "medium", api_key: str | None = None,
                  system: str = "", log=print, on_event=None, should_stop=None, base_url: str | None = None,
-                 tools: list[dict] | None = None, call_tool=None):
+                 tools: list[dict] | None = None, call_tool=None, workspace_id: str | None = None):
         self.model, self.effort, self.system, self.log = model, effort, system, log
+        self.workspace_id = workspace_id
         self.api = (base_url or os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")).rstrip("/") + "/v1/messages"
         self.on_event, self.should_stop = on_event, should_stop
         # Extra tools (connectors): [{"name", "description", "input_schema"}], run by call_tool(name, args) -> str.
         self.extra_tools, self.call_tool = tools or [], call_tool
         self.api_key = api_key or os.environ["ANTHROPIC_API_KEY"]
         self.messages: list[dict] = []
-        self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
+        self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 0}
 
     def state(self) -> dict:
         return {"messages": self.messages, "usage": self.usage}
@@ -140,6 +142,8 @@ class AnthropicComputerAgent:
             body["system"] = self.system
         headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
                    "anthropic-beta": "server-side-fallback-2026-07-01"}
+        if self.workspace_id:  # keys that aren't scoped to a workspace must name one
+            headers["anthropic-workspace-id"] = self.workspace_id
         return post_json(self.api, headers, body)
 
     def run(self, task: str, computer: Computer, max_steps: int = 40) -> dict:
@@ -169,6 +173,10 @@ class AnthropicComputerAgent:
                     self._emit("text", b["text"])
             calls = [b for b in content if b["type"] == "tool_use"]
             stop = resp.get("stop_reason")
+            if stop == "refusal":
+                d = resp.get("stop_details") or {}
+                why = d.get("explanation") or d.get("category") or "no reason given"
+                self._emit("error", {"text": f"The model declined to continue ({why})."})
             if stop != "tool_use" or not calls:
                 final = "".join(b.get("text", "") for b in content if b["type"] == "text")
                 return {"stop_reason": stop, "final": final, "steps": steps, "usage": self.usage,

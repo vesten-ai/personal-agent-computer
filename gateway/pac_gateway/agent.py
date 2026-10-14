@@ -70,7 +70,7 @@ class AgentSession:
                       log=_quiet, on_event=self.emit, should_stop=lambda: self.stop_requested,
                       base_url=mc.base_url, tools=[ASK_TOOL, *self.rt.hub.tools()], call_tool=self._call_tool)
         if mc.api == "anthropic":
-            adapter = AnthropicComputerAgent(**common)
+            adapter = AnthropicComputerAgent(**common, workspace_id=mc.workspace_id)
         else:
             adapter = OpenAIComputerAgent(**common, tool_mode=mc.tool_mode, confirm=self._confirm)
         state = self.rt.store.load_history(self.id)
