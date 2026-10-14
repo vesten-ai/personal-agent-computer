@@ -38,7 +38,11 @@ read back against its Git blob. A per-file SHA-256 manifest records the full com
 the checksum file covers both the archive and manifest. Identical commits produce identical outputs.
 Use a fresh output directory; existing archives are not overwritten.
 
-Tracked runtime databases, environment/key files, private-key markers, Anthropic credential markers
+Preparation requires `CHANGELOG.md` and checks that its first numbered release matches
+`gateway/pyproject.toml`; an optional `Unreleased` section is skipped. Missing notes or mismatched
+versions fail before any output is created.
+
+Tracked runtime databases, environment/key files (including `.env.*` and `secrets.env`), private-key markers, Anthropic credential markers
 and personal macOS home paths fail preparation. Untracked files and local changes are excluded.
 These checks are a bounded hygiene check, not proof that arbitrary secrets are absent; review the
 selected tree before approving release. CI exercises the boundary checks, prepares the archive twice,
