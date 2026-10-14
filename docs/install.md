@@ -20,7 +20,10 @@ cd personal-agent-computer
 sudo ./install.sh
 ```
 
-The script is safe to run again; it skips what is already in place. The first run builds the desktop
+The script can be run again; it preserves the existing gateway configuration and credentials.
+It starts a stopped gateway, waits for network readiness, and fails if the gateway HTTP service does
+not become ready. Re-running on an existing host has been tested; a clean-host acceptance run is
+still required before claiming fresh installations are verified. The first run builds the desktop
 image, which takes about five minutes.
 
 It creates an Incus project `pac` with:
@@ -33,7 +36,8 @@ It creates an Incus project `pac` with:
 | image `pac-desktop/dev` | Ubuntu 24.04, XFCE, Chromium, LibreOffice, CJK fonts and input methods, the computer-use daemon |
 | container `pac-gw` (10.96.10.2) | egress proxy and gateway service. Its Incus certificate is restricted to project `pac` |
 
-Change the address ranges with `PAC_SUBNET` / `PAC_BUILD_SUBNET` if they collide with yours.
+The default ranges must be available. Custom subnets are not yet supported end to end: some
+gateway configuration still assumes 10.96.10.0/24. Do not change only the host subnet variables.
 
 ## First agent
 

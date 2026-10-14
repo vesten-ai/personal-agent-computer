@@ -46,5 +46,28 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now pac-gateway.service >/dev/null 2>&1
 systemctl restart pac-gateway.service
-sleep 2
-systemctl is-active pac-gateway.service
+# is-active alone can briefly succeed before startup fails. Check the HTTP listener too.
+ready=false
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet pac-gateway.service && /opt/pac/gateway-venv/bin/python - <<'PYTHON'
+import tomllib
+import urllib.error
+import urllib.request
+with open('/etc/pac/gateway.toml', 'rb') as f:
+    config = tomllib.load(f)
+port = config.get('listen_port', 8000)
+try:
+    urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=2).close()
+except urllib.error.HTTPError as e:
+    if e.code != 401:
+        raise
+PYTHON
+  then ready=true; break; fi
+  sleep 1
+done
+if [ "$ready" != true ]; then
+  journalctl -u pac-gateway.service --no-pager -n 20 >&2
+  echo "Gateway did not become ready" >&2
+  exit 1
+fi
+echo active

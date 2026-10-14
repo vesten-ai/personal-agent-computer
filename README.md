@@ -5,6 +5,8 @@ desktop virtual machine. You talk to it from a web chat page, watch its screen,
 and take over the mouse and keyboard when you need to.
 
 > Status: early. v1 runs end to end on one Incus host; expect rough edges.
+> Personal Agent Computer is an independent open-source product, maintained by Softopia.
+> The taoz platform is a separate product.
 
 ![The web page: chat with the agent on the left, its live desktop on the right](docs/screenshot.png)
 

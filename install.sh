@@ -14,6 +14,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 P=(--project pac)
 IMAGE=${PAC_IMAGE:-pac-desktop/dev}
 GW_EXEC=(incus exec "${P[@]}" pac-gw --)
+source "$HERE/host/lib/readiness.sh"
 step() { printf '\n== %s\n' "$*"; }
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
@@ -37,7 +38,11 @@ if ! incus info "${P[@]}" pac-gw >/dev/null 2>&1; then
   incus launch images:ubuntu/24.04 pac-gw "${P[@]}" --profile gateway \
     -c limits.cpu=2 -c limits.memory=2GiB -c boot.autostart=true
 fi
-for _ in $(seq 1 60); do "${GW_EXEC[@]}" getent hosts archive.ubuntu.com >/dev/null 2>&1 && break; sleep 2; done
+# start is idempotent for the stopped-container case; do not restart a running gateway.
+if [ "$(incus list "${P[@]}" pac-gw --format csv -c s)" = STOPPED ]; then
+  incus start "${P[@]}" pac-gw
+fi
+pac_wait_ready 60 2 "gateway DNS/network" "${GW_EXEC[@]}" getent hosts archive.ubuntu.com >/dev/null
 
 step "egress proxy"
 "${GW_EXEC[@]}" mkdir -p /opt/pac/egress /etc/pac
