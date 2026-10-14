@@ -13,6 +13,11 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 P=(--project pac)
 IMAGE=${PAC_IMAGE:-pac-desktop/dev}
+export PAC_SUBNET=${PAC_SUBNET:-10.96.10}
+export PAC_BUILD_SUBNET=${PAC_BUILD_SUBNET:-10.96.11}
+PAC_GW_IP="$PAC_SUBNET.2"
+PAC_AGENT_NET="$PAC_SUBNET.0/24"
+PAC_HOST_API="https://$PAC_SUBNET.1:8443"
 GW_EXEC=(incus exec "${P[@]}" pac-gw --)
 source "$HERE/host/lib/readiness.sh"
 step() { printf '\n== %s\n' "$*"; }
@@ -20,6 +25,9 @@ step() { printf '\n== %s\n' "$*"; }
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 command -v incus >/dev/null || { echo "Incus is not installed: https://linuxcontainers.org/incus/docs/main/installing/" >&2; exit 1; }
 [ -e /dev/kvm ] || { echo "no /dev/kvm: agent desktops are virtual machines and need KVM" >&2; exit 1; }
+
+command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+python3 "$HERE/host/check-network.py" "$PAC_SUBNET" "$PAC_BUILD_SUBNET"
 
 step "host: project, bridges, egress firewall"
 bash "$HERE/host/setup.sh"
@@ -64,7 +72,7 @@ if "dns" not in b:
     b["dns"] = {"max_label": 0, "names_per_minute": 300}; json.dump(b, open(p, "w"))'
 "${GW_EXEC[@]}" sh -c 'test -f /etc/pac/egress-policy.json || cp /etc/pac/egress-base.json /etc/pac/egress-policy.json'
 incus file push "${P[@]}" "$HERE/gateway/deploy/egress-container.sh" pac-gw/root/egress-container.sh >/dev/null
-"${GW_EXEC[@]}" bash /root/egress-container.sh
+"${GW_EXEC[@]}" env PAC_GW_IP="$PAC_GW_IP" PAC_AGENT_NET="$PAC_AGENT_NET" bash /root/egress-container.sh
 
 step "gateway service"
 "${GW_EXEC[@]}" rm -rf /opt/pac/src/gateway
@@ -77,7 +85,7 @@ if "${GW_EXEC[@]}" sh -c 'incus remote list --format csv 2>/dev/null | grep -q "
 else
   token=$(bash "$HERE/host/enable-gateway-api.sh" | tail -1)
 fi
-"${GW_EXEC[@]}" env PAC_JOIN_TOKEN="$token" bash /opt/pac/src/gateway/deploy/gateway-container.sh
+"${GW_EXEC[@]}" env PAC_JOIN_TOKEN="$token" PAC_HOST_API="$PAC_HOST_API" bash /opt/pac/src/gateway/deploy/gateway-container.sh
 "${GW_EXEC[@]}" sh -c 'uv pip install -q --reinstall-package pac-gateway --python /opt/pac/gateway-venv/bin/python /opt/pac/src/gateway && systemctl restart pac-gateway'
 
 step "pac command"
