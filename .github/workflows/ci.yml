@@ -41,3 +41,18 @@ jobs:
       - run: git ls-files '*.sh' | xargs shellcheck -S warning
       - run: bash host/test-readiness.sh
       - run: python3 host/test-network.py
+
+  source-release:
+    name: Source release preparation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/test-release.py -v
+      - run: python tools/prepare-release.py --output /tmp/pac-release-a
+      - run: python tools/prepare-release.py --output /tmp/pac-release-b
+      - run: diff -r /tmp/pac-release-a /tmp/pac-release-b
+      - run: sha256sum -c *.sha256
+        working-directory: /tmp/pac-release-a
