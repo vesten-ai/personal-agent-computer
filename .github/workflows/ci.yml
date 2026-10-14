@@ -56,3 +56,10 @@ jobs:
       - run: diff -r /tmp/pac-release-a /tmp/pac-release-b
       - run: sha256sum -c *.sha256
         working-directory: /tmp/pac-release-a
+      - name: Offline install smoke from extracted source
+        run: |
+          mkdir /tmp/pac-extracted-source
+          tar -xzf /tmp/pac-release-a/*.tar.gz --strip-components=1 -C /tmp/pac-extracted-source
+          test ! -e /tmp/pac-extracted-source/.git
+          cd /tmp
+          python /tmp/pac-extracted-source/tests/acceptance/check-source.py

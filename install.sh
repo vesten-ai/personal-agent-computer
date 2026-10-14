@@ -88,7 +88,7 @@ if "${GW_EXEC[@]}" sh -c 'incus remote list --format csv 2>/dev/null | grep -q "
 else
   token=$(bash "$HERE/host/enable-gateway-api.sh" | tail -1)
 fi
-"${GW_EXEC[@]}" env PAC_JOIN_TOKEN="$token" PAC_HOST_API="$PAC_HOST_API" bash /opt/pac/src/gateway/deploy/gateway-container.sh
+"${GW_EXEC[@]}" env PAC_JOIN_TOKEN="$token" PAC_HOST_API="$PAC_HOST_API" PAC_IMAGE="$IMAGE" bash /opt/pac/src/gateway/deploy/gateway-container.sh
 "${GW_EXEC[@]}" sh -c 'uv pip install -q --reinstall-package pac-gateway --python /opt/pac/gateway-venv/bin/python /opt/pac/src/gateway && systemctl restart pac-gateway'
 
 step "pac command"

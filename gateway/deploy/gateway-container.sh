@@ -23,7 +23,8 @@ uv venv -q --allow-existing /opt/pac/gateway-venv
 uv pip install -q --python /opt/pac/gateway-venv/bin/python /opt/pac/src/gateway
 
 install -d -m 0755 /etc/pac /var/lib/pac
-[ -f /etc/pac/gateway.toml ] || install -m 0644 /opt/pac/src/gateway/gateway.example.toml /etc/pac/gateway.toml
+python3 /opt/pac/src/gateway/deploy/write-config.py \
+  /opt/pac/src/gateway/gateway.example.toml /etc/pac/gateway.toml --image "${PAC_IMAGE:-pac-desktop/dev}"
 if [ ! -f /etc/pac/gateway.env ]; then
   umask 077
   printf 'PAC_ADMIN_TOKEN=%s\n' "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')" > /etc/pac/gateway.env
