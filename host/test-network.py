@@ -25,8 +25,17 @@ class NetworkPreflight(unittest.TestCase):
 
     def test_new_custom_bridges(self):
         def run(args, **kwargs):
-            return subprocess.CompletedProcess(args, 1 if 'show' in args else 0, stdout='incusbr0\n')
+            return subprocess.CompletedProcess(args, 1 if 'show' in args else 0, stdout='[{"name": "incusbr0"}]')
         module.check('10.88.10', '10.88.11', run)
+
+    def test_existing_but_unreadable_bridge_is_refused(self):
+        def run(args, **kwargs):
+            if 'show' in args:
+                return subprocess.CompletedProcess(args, 1, stdout='')
+            self.assertEqual(args[-2:], ['--format', 'json'])
+            return subprocess.CompletedProcess(args, 0, stdout='[{"name": "pac-br0"}]')
+        with self.assertRaisesRegex(ValueError, 'cannot inspect'):
+            module.check('10.88.10', '10.88.11', run)
 
     def test_incus_failure_is_not_treated_as_missing_bridge(self):
         def run(args, **kwargs):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate PAC's /24 prefixes and existing bridges before setup mutates the host."""
 import ipaddress
+import json
 import subprocess
 import sys
 
@@ -21,9 +22,9 @@ def check(agent, build, run=subprocess.run):
         found = run(['incus', 'network', 'show', name], capture_output=True, text=True)
         if found.returncode:
             # Distinguish absence from an inaccessible or broken Incus daemon.
-            listing = run(['incus', 'network', 'list', '--format', 'csv', '-c', 'n'],
+            listing = run(['incus', 'network', 'list', '--format', 'json'],
                           capture_output=True, text=True, check=True)
-            if name in listing.stdout.splitlines():
+            if any(item['name'] == name for item in json.loads(listing.stdout)):
                 raise ValueError(f'cannot inspect existing network {name}')
             continue
         address = run(['incus', 'network', 'get', name, 'ipv4.address'],

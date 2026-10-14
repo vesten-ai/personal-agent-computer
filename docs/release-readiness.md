@@ -12,9 +12,9 @@ is part of this preparation. Existing vesten-ai links remain canonical until a n
 - OpenAI native computer tool: offline coverage only. Do not repeat paid tests without a new need.
 - DNS: queries logged and names rate-limited; this reduces bandwidth, not a data-loss prevention guarantee.
 - Approvals depend on model behavior; they are not an enforcement boundary.
-- Installation: existing-host reruns tested. Clean-host acceptance, including first boot and a stopped
-  gateway retry, remains required. Custom subnet values now propagate to gateway installation;
-  preflight and offline checks cover invalid/conflicting configuration, with live acceptance pending.
+- Installation: custom-subnet fresh component setup, new desktop, HTTPS egress, stopped-gateway
+  recovery and config preservation passed on a disposable nested host after iterative fixes. See
+  `install-acceptance.md`. Repeat the final acceptance harness on an empty host before release.
 - No prebuilt image is accepted for distribution. No VM backup/restore or concurrency capacity claim.
 
 Before release, select the canonical namespace, verify links and private reporting availability,
