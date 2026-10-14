@@ -34,3 +34,20 @@ The desktop provisioning step took 5m35s; image compression and dependency insta
 This validates fresh component setup after iterative fixes, not an untouched single-pass run of the
 final commit. Repeat `tests/acceptance/run.sh` on another empty host before a public release.
 Nested virtualization timing is not a production capacity benchmark. No real model key was used.
+
+## Offline extracted-source smoke
+
+CI extracts the candidate source archive into a fresh directory without `.git` and runs
+`python3 tests/acceptance/check-source.py` (Python 3.12+). This checks Python/shell syntax and
+initial gateway configuration from an unrelated working directory. Custom `PAC_IMAGE` values must
+reach the generated Incus image setting, defaults must still work, and rerunning configuration
+initialization must preserve existing operator settings byte for byte. The smoke uses only temporary
+files; it makes no model, Incus, package-manager or network calls.
+
+This caught an installer mismatch: `PAC_IMAGE` selected the image to build, but the initial gateway
+configuration still selected `pac-desktop/dev`. The installer now passes that image choice to the
+configuration initializer. Existing gateway configurations are deliberately preserved; if changing an
+existing installation's image alias, update its `[incus].image` setting explicitly.
+
+This offline smoke complements the real-host procedure above; it does not establish that KVM,
+networking, package downloads or a desktop boot work on a new host.
