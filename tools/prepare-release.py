@@ -31,13 +31,13 @@ def prepare(output, ref='HEAD'):
             raise ValueError(f'unsafe path: {name}')
         if any(p in {'.git', '.venv', '__pycache__', 'node_modules', 'dist', 'data'} for p in path.parts):
             raise ValueError(f'runtime/build directory tracked: {name}')
-        if path.name == '.env' or path.name.endswith(('.db', '.sqlite', '.sqlite3', '.pem', '.key')) or path.name in {'auth.json', 'history.json', 'gateway.env'}:
+        if path.name.startswith('.env.') or path.name.endswith(('.env', '.db', '.sqlite', '.sqlite3', '.pem', '.key')) or path.name in {'auth.json', 'history.json'}:
             raise ValueError(f'sensitive/runtime file tracked: {name}')
         content = git('cat-file', 'blob', oid)
         if re.search(rb'(?:sk-ant-(?:api\d+|usr)-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|/Users' rb'/[^/\s]+/)', content):
             raise ValueError(f'credential or personal path marker in: {name}')
         files[name] = (content, int(mode, 8) & 0o777)
-    required = ['LICENSE', 'README.md', 'install.sh', 'host/setup.sh', 'image/provision.sh',
+    required = ['LICENSE', 'README.md', 'CHANGELOG.md', 'install.sh', 'host/setup.sh', 'image/provision.sh',
                 'gateway/pyproject.toml', 'gateway/pac_gateway/static/index.html',
                 'gateway/pac_gateway/static/novnc/core/rfb.js',
                 'gateway/pac_gateway/static/novnc/LICENSE.txt', 'tests/acceptance/run.sh']
@@ -47,6 +47,11 @@ def prepare(output, ref='HEAD'):
     version = tomllib.loads(files['gateway/pyproject.toml'][0].decode())['project']['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:[a-z0-9.+-]*)', version):
         raise ValueError('unsafe version')
+    # Skip an optional Unreleased section, but require the latest numbered release to match.
+    changelog = files['CHANGELOG.md'][0].decode()
+    latest = re.search(r'^## (\d+\.\d+\.\d+[a-z0-9.+-]*)(?=\s|$)', changelog, re.MULTILINE)
+    if latest is None or latest.group(1) != version:
+        raise ValueError('latest changelog version does not match gateway/pyproject.toml')
     stem = f'personal-agent-computer-{version}-{commit[:12]}'
     timestamp = int(git('show', '-s', '--format=%ct', commit))
     output.mkdir(parents=True, exist_ok=True)
