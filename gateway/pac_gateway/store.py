@@ -28,6 +28,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS placeholders (
                   agent_id TEXT NOT NULL, secret TEXT NOT NULL, value TEXT NOT NULL,
                   PRIMARY KEY (agent_id, secret));
+                CREATE TABLE IF NOT EXISTS addresses (
+                  agent_id TEXT PRIMARY KEY, address TEXT NOT NULL);
             """)
 
     # -- agents --------------------------------------------------------------------------------
@@ -59,6 +61,7 @@ class Store:
         with self.lock:
             self.db.execute("DELETE FROM events WHERE agent_id = ?", (aid,))
             self.db.execute("DELETE FROM placeholders WHERE agent_id = ?", (aid,))
+            self.db.execute("DELETE FROM addresses WHERE agent_id = ?", (aid,))
             self.db.execute("DELETE FROM agents WHERE id = ?", (aid,))
             self.db.commit()
 
@@ -74,6 +77,18 @@ class Store:
             self.db.execute("INSERT INTO placeholders VALUES (?, ?, ?)", (aid, secret, value))
             self.db.commit()
             return value
+
+    # -- VM addresses ----------------------------------------------------------------------------
+    def address(self, aid: str, current: str | None) -> str | None:
+        """The VM's address: `current` if it has one (and remember it), else the last one seen.
+        A sleeping VM reports no address, but its placeholders must stay bound for when it wakes."""
+        with self.lock:
+            if current:
+                self.db.execute("INSERT OR REPLACE INTO addresses VALUES (?, ?)", (aid, current))
+                self.db.commit()
+                return current
+            r = self.db.execute("SELECT address FROM addresses WHERE agent_id = ?", (aid,)).fetchone()
+        return r["address"] if r else None
 
     # -- transcript ----------------------------------------------------------------------------
     def add_event(self, aid: str, kind: str, data) -> dict:

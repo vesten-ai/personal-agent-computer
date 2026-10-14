@@ -45,11 +45,16 @@ if ! "${GW_EXEC[@]}" test -f /etc/pac/egress-base.json; then
   deny=$(ip -o addr show scope global | awk '{print $4}' | python3 -c '
 import ipaddress, json, sys
 print(json.dumps([str(ipaddress.ip_interface(l.strip()).ip) for l in sys.stdin if l.strip()]))')
-  printf '{"default": "allow", "allow_hosts": [], "deny_hosts": [], "deny_networks": %s, "audit_log": "/var/log/pac/egress.jsonl", "secrets": []}\n' "$deny" \
+  printf '{"default": "allow", "allow_hosts": [], "deny_hosts": [], "deny_networks": %s, "audit_log": "/var/log/pac/egress.jsonl", "dns": {"max_label": 0, "names_per_minute": 300}, "secrets": []}\n' "$deny" \
     > /tmp/pac-egress-base.json
   incus file push "${P[@]}" /tmp/pac-egress-base.json pac-gw/etc/pac/egress-base.json >/dev/null
   rm -f /tmp/pac-egress-base.json
 fi
+# Hosts installed before DNS limits existed get the default limits.
+"${GW_EXEC[@]}" python3 -c '
+import json; p = "/etc/pac/egress-base.json"; b = json.load(open(p))
+if "dns" not in b:
+    b["dns"] = {"max_label": 0, "names_per_minute": 300}; json.dump(b, open(p, "w"))'
 "${GW_EXEC[@]}" sh -c 'test -f /etc/pac/egress-policy.json || cp /etc/pac/egress-base.json /etc/pac/egress-policy.json'
 incus file push "${P[@]}" "$HERE/gateway/deploy/egress-container.sh" pac-gw/root/egress-container.sh >/dev/null
 "${GW_EXEC[@]}" bash /root/egress-container.sh
