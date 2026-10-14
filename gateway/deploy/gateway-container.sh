@@ -50,6 +50,7 @@ systemctl restart pac-gateway.service
 ready=false
 for _ in $(seq 1 30); do
   if systemctl is-active --quiet pac-gateway.service && /opt/pac/gateway-venv/bin/python - <<'PYTHON'
+import sys
 import tomllib
 import urllib.error
 import urllib.request
@@ -60,7 +61,9 @@ try:
     urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=2).close()
 except urllib.error.HTTPError as e:
     if e.code != 401:
-        raise
+        sys.exit(1)
+except urllib.error.URLError:
+    sys.exit(1)
 PYTHON
   then ready=true; break; fi
   sleep 1

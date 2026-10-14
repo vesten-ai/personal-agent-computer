@@ -6,7 +6,9 @@ the agent loop, the web page and the egress proxy.
 
 ## What you need
 
-- Ubuntu 24.04 (or another distribution with Incus 6.x), with KVM (`/dev/kvm`).
+- Ubuntu 24.04 (or another distribution with Incus 6.x), x86-64, with KVM (`/dev/kvm`).
+- QEMU VM support (`qemu-system-x86_64` and `qemu-utils` on Ubuntu). Installing Incus alone
+  does not guarantee VM support. Initialize an Incus storage pool before running the installer.
 - Memory: about 1.5 GiB per idle agent with a browser open, plus 2 GiB for the gateway. Agents that
   sleep (see below) use none.
 - Disk: about 2 GB for the desktop image and 20 GB per agent (thin-provisioned on btrfs or ZFS).
@@ -22,8 +24,8 @@ sudo ./install.sh
 
 The script can be run again; it preserves the existing gateway configuration and credentials.
 It starts a stopped gateway, waits for network readiness, and fails if the gateway HTTP service does
-not become ready. Re-running on an existing host has been tested; a clean-host acceptance run is
-still required before claiming fresh installations are verified. The first run builds the desktop
+not become ready. Re-running on an existing host and fresh component setup on a disposable nested host have been
+tested; see [installation acceptance](install-acceptance.md) for the exact scope and remaining check. The first run builds the desktop
 image, which takes about five minutes.
 
 It creates an Incus project `pac` with:
@@ -45,8 +47,7 @@ sudo env PAC_SUBNET=10.88.10 PAC_BUILD_SUBNET=10.88.11 ./install.sh
 The installer passes these values to gateway DNS, NTP, firewall rules and the Incus API connection.
 Repeat the same values on every rerun. Preflight rejects invalid prefixes, identical networks, and
 existing PAC bridges with different addresses before setup changes them. Automatic migration of an
-existing installation to another subnet is not supported. Custom-subnet configuration has offline
-coverage; a clean-host live acceptance run is still pending.
+existing installation to another subnet is not supported. Custom-subnet setup was also checked on a disposable nested Incus host; see the acceptance report.
 
 ## First agent
 

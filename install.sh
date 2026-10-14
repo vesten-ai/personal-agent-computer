@@ -24,6 +24,7 @@ step() { printf '\n== %s\n' "$*"; }
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 command -v incus >/dev/null || { echo "Incus is not installed: https://linuxcontainers.org/incus/docs/main/installing/" >&2; exit 1; }
+command -v qemu-system-x86_64 >/dev/null || { echo "qemu-system-x86_64 is required (Ubuntu: apt install qemu-system-x86 qemu-utils)" >&2; exit 1; }
 [ -e /dev/kvm ] || { echo "no /dev/kvm: agent desktops are virtual machines and need KVM" >&2; exit 1; }
 
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
@@ -43,7 +44,9 @@ fi
 
 step "gateway container"
 if ! incus info "${P[@]}" pac-gw >/dev/null 2>&1; then
-  incus launch images:ubuntu/24.04 pac-gw "${P[@]}" --profile gateway \
+  # The gateway profile carries cloud-init.network-config; the non-cloud image ignores it
+  # and DHCP points this gateway back at itself.
+  incus launch images:ubuntu/24.04/cloud pac-gw "${P[@]}" --profile gateway \
     -c limits.cpu=2 -c limits.memory=2GiB -c boot.autostart=true
 fi
 # start is idempotent for the stopped-container case; do not restart a running gateway.
