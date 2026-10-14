@@ -26,6 +26,8 @@ bash "$HERE/host/setup.sh"
 step "desktop image $IMAGE"
 if incus image show "$IMAGE" >/dev/null 2>&1; then
   echo "already there (rebuild with image/build.sh $IMAGE)"
+  # Images built before build.sh cleared it carry an expiry date; clear it here too.
+  incus image show "$IMAGE" | sed 's/^expires_at: .*/expires_at: 1970-01-01T00:00:00Z/' | incus image edit "$IMAGE"
 else
   bash "$HERE/image/build.sh" "$IMAGE"
 fi

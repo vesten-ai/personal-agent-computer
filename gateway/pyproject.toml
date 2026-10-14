@@ -1,6 +1,6 @@
 [project]
 name = "pac-gateway"
-version = "0.0.0"
+version = "0.1.0"
 description = "Personal Agent Computer gateway: agent loop, model adapters, egress policy"
 requires-python = ">=3.12"
 license = "Apache-2.0"
