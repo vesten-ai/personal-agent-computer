@@ -6,6 +6,7 @@ from unittest import mock
 
 from pac_gateway.agent import Runtime
 from pac_gateway.config import Config, ModelConfig
+from pac_gateway.manager import ManagerError
 
 
 class Creation(unittest.IsolatedAsyncioTestCase):
@@ -55,6 +56,37 @@ class Creation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rt.store.agent(session.id)["name"], "assistant")
         self.assertIs(self.rt.sessions[session.id], session)
         self.thread.assert_called_with(target=self.rt._provision, args=(session,), daemon=True)
+
+    def test_failed_provision_cleanup_can_be_retried_after_incus_error(self):
+        os.environ["PAC_TEST_MODEL_KEY"] = "inert-test-key"
+        session = self.rt.create_agent("assistant")
+        manager = mock.Mock()
+        self.rt.manager = manager
+        manager.wait_ready.side_effect = ManagerError("desktop failed to initialize")
+        with mock.patch.object(self.rt, "ca_pem", return_value="inert-ca"):
+            self.rt._provision(session)
+        self.assertEqual(self.rt.store.agent(session.id)["status"], "error")
+        manager.create.assert_called_once()
+        # Incus may fail transiently while removing a partially initialized VM.
+        # Keep the agent visible, with its diagnostics, so DELETE can be retried.
+        manager.delete.side_effect = [ManagerError("Incus temporarily unavailable"), None]
+        events = self.rt.store.events(session.id)
+        with mock.patch.object(self.rt, "write_egress_policy") as policy:
+            with self.assertRaisesRegex(ManagerError, "temporarily unavailable"):
+                self.rt.delete_agent(session.id)
+            self.assertIs(self.rt.sessions.get(session.id), session)
+            self.assertEqual(self.rt.store.agent(session.id)["status"], "error")
+            self.assertEqual(self.rt.store.events(session.id), events)
+            policy.assert_not_called()
+            self.rt.delete_agent(session.id)
+            self.assertNotIn(session.id, self.rt.sessions)
+            self.assertIsNone(self.rt.store.agent(session.id))
+            self.assertEqual(self.rt.store.events(session.id), [])
+            policy.assert_called_once()
+        self.assertEqual(manager.delete.call_count, 2)
+        # After successful cleanup, the original agent name is usable again.
+        replacement = self.rt.create_agent("assistant")
+        self.assertNotEqual(replacement.id, session.id)
 
 
 if __name__ == "__main__":
