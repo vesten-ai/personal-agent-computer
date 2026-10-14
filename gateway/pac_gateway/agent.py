@@ -412,9 +412,11 @@ class Runtime:
             session.set_status("error")
 
     def delete_agent(self, aid: str) -> None:
-        session = self.sessions.pop(aid)
+        session = self.sessions[aid]
         session.interrupt()
         session.close_computer()
         self.manager.delete(session.row["vm"])
         self.store.delete_agent(aid)
+        # Keep a failed deletion addressable for retry, including its persisted diagnostics.
+        self.sessions.pop(aid)
         self.write_egress_policy()
