@@ -12,7 +12,9 @@ through this proxy, which:
   4. scrubs real secrets out of responses, in case an upstream echoes them back. Event streams
      (server-sent events, NDJSON) and large bodies are passed through as they arrive and
      scrubbed chunk by chunk, so streaming model replies stay streaming;
-  5. writes one JSON line per request to the audit log.
+  5. writes one JSON line per request to the audit log, DNS queries included;
+  6. answers DNS for deny-listed names with REFUSED, and can limit how much a client could
+     smuggle out through DNS names (see "dns" below).
 
 Run:  mitmdump --mode transparent@8081 --mode regular@8080 --mode dns@53 \
         -s credential_swap.py --set pac_policy=/etc/pac/egress-policy.json
@@ -24,6 +26,8 @@ Policy file (JSON):
     "deny_hosts": [".internal"],
     "deny_networks": ["203.0.113.7/32"],      # added to the built-in internal ranges
     "audit_log": "/var/log/pac/egress.jsonl",
+    "dns": {"max_label": 40,                   # refuse names with a longer label; 0 = no limit
+            "names_per_minute": 300},          # distinct names one client may resolve per minute; 0 = no limit
     "secrets": [
       {"name": "openai", "placeholder": "sk-pac-openai-placeholder", "env": "PAC_SECRET_OPENAI",
        "hosts": ["api.openai.com"], "clients": ["10.96.10.101"]}   # clients: optional
@@ -41,7 +45,8 @@ import socket
 import time
 from dataclasses import dataclass, field
 
-from mitmproxy import ctx, http
+from mitmproxy import ctx, dns, http
+from mitmproxy.net.dns import response_codes, types
 from mitmproxy.proxy import server_hooks
 
 INTERNAL_NETWORKS = [
@@ -88,6 +93,28 @@ def stream_scrubber(pairs: list[tuple[bytes, bytes, str]], hit=lambda name: None
     return stream
 
 
+class DnsLimiter:
+    """DNS can carry data out in the names themselves (one long label, or many unique names under a
+    domain the attacker serves). Every name is logged; these optional limits cut the bandwidth."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, dict[str, float]] = {}   # client -> name -> last asked
+
+    def check(self, client: str, name: str, max_label: int, per_minute: int, now: float) -> str | None:
+        if max_label and any(len(label) > max_label for label in name.split(".")):
+            return f"DNS label longer than {max_label} characters"
+        if not per_minute:
+            return None
+        names = self.seen.setdefault(client, {})
+        for n, t in list(names.items()):
+            if now - t > 60:
+                del names[n]
+        if name not in names and len(names) >= per_minute:
+            return f"more than {per_minute} different names in a minute"
+        names[name] = now
+        return None
+
+
 def _is_ip(s: str) -> bool:
     try:
         ipaddress.ip_address(s)
@@ -128,6 +155,8 @@ class Policy:
     deny_networks: list[ipaddress._BaseNetwork] = field(default_factory=list)
     secrets: list[Secret] = field(default_factory=list)
     audit_log: str | None = None
+    dns_max_label: int = 0
+    dns_names_per_minute: int = 0
 
     @classmethod
     def load(cls, path: str) -> "Policy":
@@ -142,8 +171,9 @@ class Policy:
                 raise ValueError(f"pac: secret {s['name']}: placeholder too short to be unambiguous")
             secrets.append(Secret(s["name"], s["placeholder"], value, s["hosts"], s.get("clients", [])))
         nets = [ipaddress.ip_network(n) for n in INTERNAL_NETWORKS + raw.get("deny_networks", [])]
+        d = raw.get("dns", {})
         return cls(raw.get("default", "allow"), raw.get("allow_hosts", []), raw.get("deny_hosts", []),
-                   nets, secrets, raw.get("audit_log"))
+                   nets, secrets, raw.get("audit_log"), int(d.get("max_label", 0)), int(d.get("names_per_minute", 0)))
 
     def ip_denied(self, ip: str) -> bool:
         try:
@@ -166,6 +196,7 @@ class CredentialSwap:
     def __init__(self) -> None:
         self.policy = Policy()
         self.mtime = 0.0
+        self.dns_limiter = DnsLimiter()
 
     def load(self, loader) -> None:
         loader.add_option("pac_policy", str, "/etc/pac/egress-policy.json", "Path to the PAC egress policy")
@@ -285,6 +316,47 @@ class CredentialSwap:
     def error(self, flow: http.HTTPFlow) -> None:
         self._audit(flow)
 
+    # -- DNS -------------------------------------------------------------------------------
+    def dns_request(self, flow: dns.DNSFlow) -> None:
+        self._maybe_reload()
+        if not flow.request.questions:
+            return
+        name = flow.request.question.name.rstrip(".").lower()
+        client_ip = flow.client_conn.peername[0] if flow.client_conn.peername else ""
+        reason = self.policy.host_denied(name) or self.dns_limiter.check(
+            client_ip, name, self.policy.dns_max_label, self.policy.dns_names_per_minute, time.time())
+        if reason:
+            flow.metadata["pac_blocked"] = reason
+            flow.response = flow.request.fail(response_codes.REFUSED)
+
+    def dns_response(self, flow: dns.DNSFlow) -> None:
+        self._audit_dns(flow)
+
+    def dns_error(self, flow: dns.DNSFlow) -> None:
+        self._audit_dns(flow)
+
+    def _audit_dns(self, flow: dns.DNSFlow) -> None:
+        if not self.policy.audit_log or not flow.request.questions:
+            return
+        q, resp = flow.request.question, flow.response
+        answers = []
+        for rr in (resp.answers if resp else [])[:8]:
+            try:
+                answers.append(str(rr))
+            except Exception:
+                answers.append(types.to_str(rr.type))
+        self._write_audit({
+            "ts": round(time.time(), 3),
+            "kind": "dns",
+            "client": flow.client_conn.peername[0] if flow.client_conn.peername else None,
+            "name": q.name.rstrip("."),
+            "type": types.to_str(q.type),
+            "rcode": response_codes.to_str(resp.response_code) if resp else None,
+            "answers": answers,
+            "blocked": flow.metadata.get("pac_blocked"),
+            "error": str(flow.error) if flow.error else None,
+        })
+
     # -- helpers ---------------------------------------------------------------------------
     @staticmethod
     def _scannable(msg: http.Message) -> bool:
@@ -326,8 +398,9 @@ class CredentialSwap:
         if not self.policy.audit_log:
             return
         req = flow.request
-        rec = {
+        self._write_audit({
             "ts": round(time.time(), 3),
+            "kind": "http",
             "client": flow.client_conn.peername[0] if flow.client_conn.peername else None,
             "method": req.method,
             "host": req.pretty_host,
@@ -338,7 +411,9 @@ class CredentialSwap:
             "streamed": bool(flow.metadata.get("pac_streamed")),
             "blocked": flow.metadata.get("pac_blocked"),
             "error": str(flow.error) if flow.error else None,
-        }
+        })
+
+    def _write_audit(self, rec: dict) -> None:
         try:
             os.makedirs(os.path.dirname(self.policy.audit_log), exist_ok=True)
             with open(self.policy.audit_log, "a") as f:

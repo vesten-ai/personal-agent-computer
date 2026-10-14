@@ -203,6 +203,7 @@ class AgentSession:
             mgr.wait_ready(vm)
             mgr.sync_clock(vm)
             self.close_computer()
+            self.rt.write_egress_policy()  # in case the VM came back on another address
             if how == "restored":
                 threading.Thread(target=self._reclaim, daemon=True).start()
             note = {"restored": "; its windows are as it left them",
@@ -361,9 +362,10 @@ class Runtime:
                 if not self.cfg.secrets or session.row["status"] in ("creating", "error"):
                     continue
                 try:
-                    addr = self.manager.info(session.row["vm"]).address
+                    current = self.manager.info(session.row["vm"]).address
                 except Exception:
-                    addr = None
+                    current = None
+                addr = self.store.address(aid, current)
                 if not addr:
                     continue
                 for name, value in self.placeholders(aid).items():

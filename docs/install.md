@@ -96,6 +96,22 @@ incus exec --project pac pac-gw -- systemctl restart pac-egress pac-gateway
 New agents then have `$GH_TOKEN` set to a placeholder. The proxy swaps it for the real token only on
 HTTPS requests to the listed hosts that come from that agent's VM, and swaps it back in responses.
 
+## What leaves an agent's computer
+
+Every connection from an agent VM goes through the egress proxy in `pac-gw`, and every request and DNS
+lookup is written to `/var/log/pac/egress.jsonl` there, one JSON line each. The proxy's starting
+rules are in `/etc/pac/egress-base.json`:
+
+- `deny_hosts` and `deny_networks` refuse destinations; the host's own addresses are denied at install.
+- `"default": "deny"` with `allow_hosts` lets agents reach only the listed hosts, for HTTP and DNS alike.
+- `dns.names_per_minute` (300 by default) caps how many different names one agent can look up in a
+  minute, and `dns.max_label` (off by default) refuses names with a longer label. Data can be smuggled
+  out inside DNS names; these limits and the log make that slow and visible, not impossible. Five busy
+  news sites in a row looked up 61 names; the longest label was 18 characters. Long labels do occur
+  legitimately, in S3 bucket hostnames for example, which is why `max_label` is off.
+
+The gateway keeps the file's other settings and adds the agents' placeholders to the live policy.
+
 ## Connectors
 
 Connectors are MCP servers the gateway runs outside the VMs; their tools appear to the model next to

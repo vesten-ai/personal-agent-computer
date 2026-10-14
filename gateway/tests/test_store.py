@@ -19,6 +19,17 @@ class StoreTest(unittest.TestCase):
             s.delete_agent(a["id"])
             self.assertIsNone(s.agent(a["id"]))
 
+    def test_a_sleeping_vm_keeps_its_last_address(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = Store(d)
+            a = s.create_agent("alice", "gpt")
+            self.assertIsNone(s.address(a["id"], None))
+            self.assertEqual(s.address(a["id"], "10.96.10.101"), "10.96.10.101")
+            self.assertEqual(s.address(a["id"], None), "10.96.10.101")      # stopped: no address reported
+            self.assertEqual(s.address(a["id"], "10.96.10.105"), "10.96.10.105")
+            s.delete_agent(a["id"])
+            self.assertIsNone(s.address(a["id"], None))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,7 +51,8 @@ Incus host: project pac, agent bridge (VMs port-isolated, IP/MAC-filtered, only 
 
 ## Known gaps carried from the spikes
 
-- DNS can carry data out (gateway resolves any name). v1 logs every query; restricting it is later.
+- DNS can carry data out (gateway resolves any name). Every query is logged, deny/allow lists apply,
+  and distinct names per agent per minute are capped; small leaks remain possible.
 - ~~Stateful wake restores the full memory limit.~~ Fixed by cycling the balloon after a restore; free
   page reporting is on (see spike 4's follow-up).
 - Claude computer use and OpenAI's built-in computer tool are tested offline only.

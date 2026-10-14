@@ -64,8 +64,8 @@ The full guide, including credentials and connectors, is in [docs/install.md](do
 - One desktop VM per agent on a single Incus host.
 - Watching and taking over the agent's screen from the browser.
 - No messaging-app integrations, no bundled connectors, no multi-user accounts: one admin token.
-- Known gaps: DNS lookups are not restricted yet, and Claude computer use and OpenAI's built-in
-  computer tool have only been tested offline (live runs so far use an OpenAI-compatible relay with
+- Known gaps: DNS lookups are logged and rate-limited but can still leak small amounts of data,
+  and Claude computer use and OpenAI's built-in computer tool have only been tested offline (live runs so far use an OpenAI-compatible relay with
   computer use as a function tool).
 
 ## Repository layout
