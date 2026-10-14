@@ -42,6 +42,8 @@ tool_mode = "native"
 api = "anthropic"
 model = "claude-opus-5-5"
 key_env = "PAC_MODEL_CLAUDE_KEY"
+effort = "high"            # Opus 5.5 defaults to medium; computer use goes better at high
+# workspace_id = "wrkspc_..."   # only for keys that aren't scoped to a workspace
 
 # Credentials the agents may use but never hold. The real value lives only in the egress proxy's
 # environment (/etc/pac/secrets.env, variable `value_env`). Each agent's VM gets its own placeholder in

@@ -55,4 +55,6 @@ Incus host: project pac, agent bridge (VMs port-isolated, IP/MAC-filtered, only 
   and distinct names per agent per minute are capped; small leaks remain possible.
 - ~~Stateful wake restores the full memory limit.~~ Fixed by cycling the balloon after a restore; free
   page reporting is on (see spike 4's follow-up).
-- Claude computer use and OpenAI's built-in computer tool are tested offline only.
+- ~~Claude computer use tested offline only.~~ Tested live on factory1 2026-10-14 (Claude Opus 5.5):
+  browser, terminal, Chinese input, an approval before deleting, and a saved sleep plus gateway
+  restart in the middle of a conversation. OpenAI's built-in computer tool is still offline only.

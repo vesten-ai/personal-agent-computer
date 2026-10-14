@@ -76,6 +76,18 @@ class AnthropicAdapter(unittest.TestCase):
         self.assertEqual(results[6]["content"][-1]["type"], "image")
         self.assertEqual(second_body["tools"], [{"type": "computer_toolset_20260801"}])
 
+    def test_workspace_header_and_refusal(self):
+        agent = ant.AnthropicComputerAgent(api_key="x", log=lambda *_: None, workspace_id="wrkspc_1")
+        events = []
+        agent.on_event = lambda kind, data: events.append((kind, data))
+        refusal = {"stop_reason": "refusal", "content": [],
+                   "stop_details": {"type": "refusal", "category": "cyber", "explanation": None}}
+        with mock.patch.object(ant, "post_json", return_value=refusal) as post:
+            out = agent.run("task", FakeComputer())
+        self.assertEqual(post.call_args.args[1]["anthropic-workspace-id"], "wrkspc_1")
+        self.assertEqual(out["stop_reason"], "refusal")
+        self.assertIn(("error", {"text": "The model declined to continue (cyber)."}), events)
+
     def test_failure_stops_the_batch_and_marks_the_rest(self):
         c = FakeComputer(fail_on="type")
         turns = [
