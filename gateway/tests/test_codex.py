@@ -1,5 +1,8 @@
 """Process-level app-server bridge checks, without credentials, Incus or model requests."""
 import asyncio
+import json
+import socket
+import threading
 import os
 from pathlib import Path
 import sys
@@ -7,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pac_gateway.adapters.codex import AppServer, CodexComputerAgent, CodexError
+from pac_gateway.adapters.codex import AppServer, CodexComputerAgent, CodexError, ToolSocket
 from pac_gateway.agent import Runtime
 from pac_gateway.config import Config, ModelConfig
 
@@ -213,6 +216,26 @@ class CodexBridge(unittest.TestCase):
         for mode in ('completed', 'answered', 'interrupted'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 asyncio.run(scenario(directory, mode))
+
+    def test_old_turn_socket_does_not_adopt_next_turn_cancellation_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = self.adapter(directory, [])
+            adapter.computer = mock.Mock()
+            adapter.steps, adapter.max_steps = 0, 5
+            tools = ToolSocket(adapter)
+            try:
+                adapter.cancelled.set()
+                adapter.cancelled = threading.Event()  # simulate a subsequent live turn
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.connect(tools.path)
+                    with client.makefile('rw') as stream:
+                        stream.write(json.dumps({'method': 'tools/call', 'params': {
+                            'name': 'pac_computer', 'arguments': {'type': 'screenshot'}}}) + '\n')
+                        stream.flush()
+                        self.assertTrue(json.loads(stream.readline())['isError'])
+                adapter.computer.screenshot.assert_not_called()
+            finally:
+                tools.close()
 
     def test_interruption_reaps_app_server(self):
         with tempfile.TemporaryDirectory() as directory:

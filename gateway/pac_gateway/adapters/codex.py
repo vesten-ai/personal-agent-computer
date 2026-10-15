@@ -103,6 +103,7 @@ class ToolSocket:
         self.directory = tempfile.TemporaryDirectory(prefix='pac-tools-', dir='/tmp')
         os.chmod(self.directory.name, 0o700)
         self.path = self.directory.name + '/tools.sock'
+        cancelled = adapter.cancelled  # bind accepted requests to this turn, never its successor
 
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
@@ -117,7 +118,7 @@ class ToolSocket:
                     else:
                         params = request['params']
                         answer = adapter._tool('item/tool/call', {'tool': params['name'],
-                                               'arguments': params.get('arguments') or {}})
+                                               'arguments': params.get('arguments') or {}}, cancelled=cancelled)
                         content = []
                         for item in answer['contentItems']:
                             if item['type'] == 'inputImage':
@@ -205,9 +206,9 @@ class CodexComputerAgent:
                             'item_type': item.get('type'),
                             'receiver_thread_ids': item.get('receiverThreadIds', [])})
 
-    def _tool(self, method, params):
+    def _tool(self, method, params, *, cancelled=None):
         # A root and its children share one desktop and one human-question slot.
-        cancelled = self.cancelled
+        cancelled = self.cancelled if cancelled is None else cancelled
         with self.tool_lock:
             return self._dispatch(method, params, cancelled)
 
