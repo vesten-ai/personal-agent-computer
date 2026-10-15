@@ -92,17 +92,25 @@
     <img class="screen" id="screen" alt="The agent's screen" hidden>
     <div class="screen placeholder" id="noscreen">No screenshot yet</div>
     <p class="hint" id="hint"></p>
+    <button id="delete-agent" class="ghost" type="button" hidden>Delete agent</button>
+    <p class="hint" id="delete-feedback" role="status"></p>
   </section>
 </div>
 <script type="module">
 import RFB from "/static/novnc/core/rfb.js";
 const $ = (id) => document.getElementById(id);
 const wsBase = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
-let agents = [], current = null, ws = null, lastId = 0, rfb = null, takenOver = false, replaying = false;
+let agents = [], current = null, ws = null, lastId = 0, rfb = null, takenOver = false, replaying = false, deleting = false;
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(data.error || r.statusText), {
+      code: data.code, retryable: data.retryable === true && data.agent_retained === true,
+      agentRetained: data.agent_retained
+    });
+  }
   return r.json();
 }
 
@@ -205,6 +213,8 @@ function setStatus(s) {
   $("wake").hidden = s !== "asleep";
   const ready = ["ready", "working", "waiting", "taken_over", "asleep"].includes(s);
   $("text").disabled = $("send").disabled = !ready;
+  $("delete-agent").hidden = !current;
+  $("delete-agent").disabled = deleting || ["creating", "working", "waiting"].includes(s);
   takenOver = s === "taken_over";
   $("takeover").hidden = !ready || takenOver || s === "asleep";
   $("handback").hidden = !takenOver;
@@ -240,6 +250,8 @@ function connectScreen(id) {
 
 async function select(id) {
   current = id; lastId = 0;
+  $("delete-agent").textContent = "Delete agent";
+  $("delete-feedback").textContent = "";
   ws?.close();
   const a = agents.find((x) => x.id === id);
   $("title").textContent = a ? `${a.name} · ${a.model}` : "";
@@ -256,6 +268,45 @@ async function select(id) {
   ws.onmessage = (m) => add(JSON.parse(m.data));
   ws.onclose = () => { if (current === id) setTimeout(() => current === id && select(id), 2000); };
 }
+
+function clearSelection() {
+  current = null;
+  ws?.close(); ws = null;
+  rfb?.disconnect(); rfb = null;
+  $("title").textContent = "No agent selected";
+  $("log").replaceChildren();
+  $("live").hidden = $("screen").hidden = true;
+  $("noscreen").hidden = false;
+  $("text").disabled = $("send").disabled = true;
+  ["stop", "wake", "takeover", "handback", "delete-agent"].forEach((id) => $(id).hidden = true);
+  $("status").textContent = "";
+  $("hint").textContent = "";
+}
+
+$("delete-agent").onclick = async () => {
+  const id = current, agent = agents.find((a) => a.id === id);
+  if (!agent || deleting || !confirm(`Delete ${agent.name} and its computer?`)) return;
+  deleting = true;
+  $("delete-agent").disabled = true;
+  try {
+    await api(`/api/agents/${id}`, { method: "DELETE" });
+    if (current === id) clearSelection();
+    await loadAgents();
+    $("delete-feedback").textContent = `Deleted ${agent.name}.`;
+  } catch (error) {
+    if (current !== id) return;
+    if (error.agentRetained === false) {
+      clearSelection();
+      await loadAgents().catch(() => {});
+    }
+    $("delete-feedback").textContent = error.message;
+    $("delete-agent").textContent = error.retryable ? "Retry delete" : "Delete agent";
+  } finally {
+    deleting = false;
+    const selected = agents.find((a) => a.id === current);
+    $("delete-agent").disabled = !selected || selected.busy || ["creating", "working", "waiting"].includes(selected.status);
+  }
+};
 
 $("new").onsubmit = async (e) => {
   e.preventDefault();

@@ -84,7 +84,16 @@ def build_app(cfg: config.Config) -> Starlette:
         aid = request.path_params["aid"]
         if aid not in rt().sessions:
             return JSONResponse({"error": "not found"}, 404)
-        await asyncio.to_thread(rt().delete_agent, aid)
+        try:
+            await asyncio.to_thread(rt().delete_agent, aid)
+        except Exception:
+            # VM removal may fail before cleanup, or policy writing may fail after removal.
+            # Never expose manager stderr or tell the caller a missing record was retained.
+            retained = aid in rt().sessions
+            message = ("Deletion did not complete. The agent record is retained; retry deletion."
+                       if retained else "Cleanup could not be confirmed. Refresh the agent list before retrying.")
+            return JSONResponse({"error": message, "code": "agent_delete_incomplete",
+                                 "retryable": retained, "agent_retained": retained}, 503 if retained else 500)
         return JSONResponse({"ok": True})
 
     def session_for(request: Request):
