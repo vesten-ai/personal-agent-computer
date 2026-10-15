@@ -51,3 +51,20 @@ existing installation's image alias, update its `[incus].image` setting explicit
 
 This offline smoke complements the real-host procedure above; it does not establish that KVM,
 networking, package downloads or a desktop boot work on a new host.
+
+
+## Codex source-entrypoint coverage
+
+The source package at `ab95b13` included both Codex entrypoints; no broken distribution was observed.
+Its smoke could nevertheless report PASS after `gateway/pac_gateway/codex_tools.py` was removed,
+because syntax checks traversed only files still present. The extracted-source smoke now explicitly
+requires runtime entrypoints/static assets and runs the existing CLI `--version` check against package
+metadata from an unrelated working directory.
+
+It also starts the actual packaged `codex_tools.py` stdio frontend with a temporary HOME and no
+PYTHONPATH or installed PAC package. MCP initialize/list/call must traverse the private Unix socket,
+return the fake desktop's exact PNG bytes, and leave no handlers or accepted peers. This uses no
+Codex executable, real key, Incus or external network. Negative cases reject missing entrypoints and
+a syntactically valid frontend that exits without answering MCP. CI runs these cases before building
+and checking the extracted artifact. Clean-host KVM/network/desktop and real-provider acceptance
+remain separate requirements.
