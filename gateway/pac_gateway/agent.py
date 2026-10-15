@@ -13,6 +13,7 @@ import time
 
 from .adapters.anthropic import AnthropicComputerAgent
 from .adapters.openai import OpenAIComputerAgent
+from .adapters.codex import CodexComputerAgent
 from .computer import Computer
 from .config import Config
 from .manager import IncusManager
@@ -69,7 +70,10 @@ class AgentSession:
         common = dict(model=mc.model, effort=mc.effort, api_key=mc.api_key, system=self.rt.system_prompt(),
                       log=_quiet, on_event=self.emit, should_stop=lambda: self.stop_requested,
                       base_url=mc.base_url, tools=[ASK_TOOL, *self.rt.hub.tools()], call_tool=self._call_tool)
-        if mc.api == "anthropic":
+        if mc.api == "codex":
+            adapter = CodexComputerAgent(**common, home=os.path.join(self.rt.store.agent_dir(self.id), "codex-runtime"),
+                                         command=mc.codex_command or None)
+        elif mc.api == "anthropic":
             adapter = AnthropicComputerAgent(**common, workspace_id=mc.workspace_id)
         else:
             adapter = OpenAIComputerAgent(**common, tool_mode=mc.tool_mode, confirm=self._confirm)

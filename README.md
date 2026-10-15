@@ -90,3 +90,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately 
 ## License
 
 [Apache License 2.0](LICENSE)
+
+Experimental: [Codex-owned runtime and subagent bridge](docs/codex-runtime.md) is opt-in.
+Its local runtime/tool/delegation smoke uses a canned provider; real-model desktop acceptance is pending.
