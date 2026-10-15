@@ -14,6 +14,7 @@ that reaches the gateway with PAC_URL and PAC_TOKEN set. Standard library only.
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
 import tomllib
@@ -28,7 +29,9 @@ ENV_FILE = "/etc/pac/gateway.env"
 
 
 class CLIError(Exception):
-    pass
+    def __init__(self, message, *, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _env_file_value(name: str) -> str:
@@ -72,11 +75,14 @@ class Gateway:
             with urllib.request.urlopen(req, timeout=600) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
+            retryable = False
             try:
-                msg = json.load(e).get("error", e.reason)
+                error = json.load(e)
+                msg = error.get("error", e.reason)
+                retryable = error.get("retryable") is True and error.get("agent_retained") is True
             except Exception:
                 msg = e.reason
-            raise CLIError(f"{method} {path}: {msg}") from None
+            raise CLIError(f"{method} {path}: {msg}", retryable=retryable) from None
         except urllib.error.URLError as e:
             raise CLIError(f"can't reach the gateway at {self.url}: {e.reason}") from None
 
@@ -205,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"deleted {a['name']}")
     except CLIError as e:
         print(f"pac: {e}", file=sys.stderr)
+        if args.cmd == "delete" and e.retryable:
+            print("Retry: " + shlex.join(["pac", "delete", "--", args.name]), file=sys.stderr)
         return 1
     return 0
 
