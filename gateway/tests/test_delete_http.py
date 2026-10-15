@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -116,12 +117,41 @@ class DeletionCLI(unittest.TestCase):
             self.assertEqual(cli.main(['delete', 'assistant']), 1)
         self.assertNotIn('deleted assistant', out.getvalue())
         self.assertIn('record is retained', err.getvalue())
-        self.assertIn('Retry: pac delete assistant', err.getvalue())
+        self.assertIn('Retry: pac delete -- assistant', err.getvalue())
         with mock.patch.object(cli, 'connection', return_value=('http://fixture', 'inert-token')), \
                 mock.patch.object(cli.Gateway, 'find', return_value=agent), \
                 mock.patch.object(cli.Gateway, 'call', return_value={'ok': True}), contextlib.redirect_stdout(out):
             self.assertEqual(cli.main(['delete', 'assistant']), 0)
         self.assertIn('deleted assistant', out.getvalue())
+
+    def test_printed_retry_command_reparses_and_deletes_the_exact_name(self):
+        for name in ('assistant', 'two words', "agent's \"notes\"", '--help', '--model'):
+            with self.subTest(name=name):
+                body = {'error': 'Record retained; retry deletion.',
+                        'retryable': True, 'agent_retained': True}
+                failure = urllib.error.HTTPError('http://fixture/api/agents/test-id', 503,
+                    'Unavailable', {}, io.BytesIO(json.dumps(body).encode()))
+                output, errors = io.StringIO(), io.StringIO()
+                agent = {'id': 'test-id', 'name': name}
+                with mock.patch.object(cli, 'connection', return_value=('http://fixture', 'inert-token')), \
+                        mock.patch.object(cli.Gateway, 'find', return_value=agent), \
+                        mock.patch.object(cli.urllib.request, 'urlopen', side_effect=failure), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(cli.main(['delete', '--', name]), 1)
+                retry = next(line.removeprefix('Retry: ') for line in errors.getvalue().splitlines()
+                             if line.startswith('Retry: '))
+                argv = shlex.split(retry)
+                self.assertEqual(argv[0], 'pac')
+                output = io.StringIO()
+                with mock.patch.object(cli, 'connection', return_value=('http://fixture', 'inert-token')), \
+                        mock.patch.object(cli.Gateway, 'find', return_value=agent) as find, \
+                        mock.patch.object(cli.Gateway, 'call', return_value={'ok': True}) as call, \
+                        contextlib.redirect_stdout(output):
+                    # Feed the printed command back through the real argparse parser and command handler.
+                    self.assertEqual(cli.main(argv[1:]), 0)
+                find.assert_called_once_with(name)
+                call.assert_called_once_with('DELETE', '/api/agents/test-id')
+                self.assertIn('deleted ' + name, output.getvalue())
 
 
 if __name__ == '__main__':

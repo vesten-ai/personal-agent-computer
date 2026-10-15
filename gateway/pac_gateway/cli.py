@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     except CLIError as e:
         print(f"pac: {e}", file=sys.stderr)
         if args.cmd == "delete" and e.retryable:
-            print("Retry: " + shlex.join(["pac", "delete", args.name]), file=sys.stderr)
+            print("Retry: " + shlex.join(["pac", "delete", "--", args.name]), file=sys.stderr)
         return 1
     return 0
 
