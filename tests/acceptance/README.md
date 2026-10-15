@@ -17,3 +17,20 @@ Check the gateway API again. Also try a different requested subnet and confirm p
 without changing the existing bridges.
 
 This is installation/desktop validation, not live model or native OpenAI tool acceptance.
+
+
+## Offline extracted-source checks
+
+With Python 3.12+ on Linux/macOS, from an extracted source archive (no Git checkout, Codex, Incus,
+real credentials or dependency installation needed):
+
+```sh
+python3 tests/acceptance/check-source.py
+python3 tests/acceptance/test-source.py -v
+```
+
+The first checks required files, configuration preservation, Python/shell syntax, CLI/package version
+consistency and a real stdio MCP handshake/list/screenshot through a private Unix socket to a fake
+desktop. The second checks that omitted entrypoints and an inert but syntactically valid frontend
+fail validation. It uses source-only disposable fixtures and makes no model or Incus calls.
+These checks prepare source artifacts; they do not replace the real-host command above.
