@@ -8,12 +8,13 @@ from dataclasses import dataclass, field
 @dataclass
 class ModelConfig:
     name: str
-    api: str                  # "openai" (Responses) or "anthropic" (Messages)
+    api: str                  # "openai", "anthropic", or experimental "codex" app-server
     model: str
     key_env: str
     base_url: str | None = None
     tool_mode: str = "native"  # openai only: "native" computer tool or "function"
     effort: str = "medium"
+    codex_command: list[str] = field(default_factory=list)  # experimental app-server executable/args
     workspace_id: str | None = None  # anthropic only: for keys not scoped to a workspace
 
     @property

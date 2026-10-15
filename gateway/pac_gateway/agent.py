@@ -13,6 +13,7 @@ import time
 
 from .adapters.anthropic import AnthropicComputerAgent
 from .adapters.openai import OpenAIComputerAgent
+from .adapters.codex import CodexComputerAgent
 from .computer import Computer
 from .config import Config
 from .manager import IncusManager
@@ -69,7 +70,10 @@ class AgentSession:
         common = dict(model=mc.model, effort=mc.effort, api_key=mc.api_key, system=self.rt.system_prompt(),
                       log=_quiet, on_event=self.emit, should_stop=lambda: self.stop_requested,
                       base_url=mc.base_url, tools=[ASK_TOOL, *self.rt.hub.tools()], call_tool=self._call_tool)
-        if mc.api == "anthropic":
+        if mc.api == "codex":
+            adapter = CodexComputerAgent(**common, home=os.path.join(self.rt.store.agent_dir(self.id), "codex-runtime"),
+                                         command=mc.codex_command or None, ask_person=self._ask)
+        elif mc.api == "anthropic":
             adapter = AnthropicComputerAgent(**common, workspace_id=mc.workspace_id)
         else:
             adapter = OpenAIComputerAgent(**common, tool_mode=mc.tool_mode, confirm=self._confirm)
@@ -84,7 +88,7 @@ class AgentSession:
             return self._ask(str(args.get("question", "")), [str(o) for o in args.get("options") or []])
         return self.rt.hub.call_tool(name, args)
 
-    def _ask(self, question: str, options: list[str]) -> str:
+    def _ask(self, question: str, options: list[str], *, cancel_event=None) -> str:
         """Put the question in front of the person and block this turn until they answer or stop it."""
         qid = pysecrets.token_hex(6)
         done = threading.Event()
@@ -92,8 +96,10 @@ class AgentSession:
         self.emit("approval", {"id": qid, "question": question, "options": options or ["Yes", "No"]})
         self.rt.loop.call_soon_threadsafe(self.set_status, "waiting")
         try:
-            while not done.wait(1):
-                if self.stop_requested:
+            while not done.wait(.1 if cancel_event is not None else 1):
+                if self.stop_requested or (cancel_event is not None and cancel_event.is_set()):
+                    if cancel_event is not None:
+                        self.emit("approval_answered", {"id": qid, "answer": "Cancelled: Codex turn ended."})
                     return "The person stopped the task without answering."
             answer = self.pending["answer"]
         finally:

@@ -57,6 +57,13 @@ class Creation(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.rt.sessions[session.id], session)
         self.thread.assert_called_with(target=self.rt._provision, args=(session,), daemon=True)
 
+    def test_explicit_codex_model_selects_codex_owned_runtime(self):
+        os.environ["PAC_TEST_MODEL_KEY"] = "inert-test-key"
+        self.cfg.models['gpt'].api = 'codex'
+        session = self.rt.create_agent("codex-assistant")
+        self.assertEqual(session.adapter.state(), {'engine': 'codex', 'thread_id': None})
+        self.assertEqual(session.adapter.home.parent.name, session.id)
+
     def test_failed_provision_cleanup_can_be_retried_after_incus_error(self):
         os.environ["PAC_TEST_MODEL_KEY"] = "inert-test-key"
         session = self.rt.create_agent("assistant")
