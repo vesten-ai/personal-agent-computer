@@ -57,7 +57,9 @@ persist this environment restriction in Codex 0.147.0.
 
 Offline gateway tests separately cover stop/reaping, tool RPC, history-engine mismatch and questions.
 When a root turn completes while a child is waiting for a person, an internal per-turn cancellation
-event settles that question without an answer or Stop click. Socket handler cleanup has a bounded
+event settles that question without an answer or Stop click. Accepted sockets are tracked before handler scheduling and actively shut down/closed on exit,
+so idle peers blocked before a newline release their handlers without client cooperation. Malformed
+transport input returns a generic error without logging payloads. Socket handler cleanup has a bounded
 wait. Tests use the real PAC worker/question path and private socket to cover natural completion,
 a normal answer, explicit interruption, and a successful subsequent turn.
 

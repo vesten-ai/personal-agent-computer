@@ -1,8 +1,11 @@
 """Process-level app-server bridge checks, without credentials, Incus or model requests."""
 import asyncio
+import contextlib
+import io
 import json
 import socket
 import threading
+import time
 import os
 from pathlib import Path
 import sys
@@ -236,6 +239,80 @@ class CodexBridge(unittest.TestCase):
                 adapter.computer.screenshot.assert_not_called()
             finally:
                 tools.close()
+
+    def test_close_reaps_idle_accepted_peer_without_waiting_for_client_close(self):
+        for payload in (b'', b'{\"private\": \"incomplete-without-newline'):
+            with tempfile.TemporaryDirectory() as directory:
+                tools = ToolSocket(self.adapter(directory, []))
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                    peer.connect(tools.path)
+                    peer.sendall(payload)
+                    deadline = time.monotonic() + 1
+                    while not tools.server.active and time.monotonic() < deadline:
+                        time.sleep(.005)
+                    handlers = list(tools.server.active)
+                    self.assertTrue(handlers)
+                    started = time.monotonic()
+                    tools.close()  # the peer stays open throughout cleanup and assertions
+                    self.assertLess(time.monotonic() - started, 1)
+                    self.assertFalse(tools.server.active)
+                    self.assertFalse(tools.server.connections)
+                    self.assertTrue(all(not handler.is_alive() for handler in handlers))
+                    peer.settimeout(.5)
+                    self.assertEqual(peer.recv(1024), b'')
+
+    def test_malformed_and_truncated_json_do_not_echo_private_payloads(self):
+        for payload in (b'{"private": "sensitive-fixture-value"', b'sensitive-fixture-value\n'):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory:
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    tools = ToolSocket(self.adapter(directory, []))
+                    try:
+                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                            peer.settimeout(1)
+                            peer.connect(tools.path)
+                            peer.sendall(payload)
+                            peer.shutdown(socket.SHUT_WR)
+                            with peer.makefile('r') as stream:
+                                reply = stream.readline()
+                                self.assertTrue(json.loads(reply)['isError'])
+                                self.assertNotIn('sensitive-fixture-value', reply)
+                    finally:
+                        tools.close()
+                self.assertEqual(stderr.getvalue(), '')
+                self.assertFalse(tools.server.active)
+                self.assertFalse(tools.server.connections)
+
+    def test_accepted_socket_is_tracked_before_handler_begins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tools = ToolSocket(self.adapter(directory, []))
+            started, release = threading.Event(), threading.Event()
+            process = tools.server.process_request_thread
+
+            def delayed(request, address):
+                started.set()
+                release.wait(1)
+                process(request, address)
+
+            tools.server.process_request_thread = delayed
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+                peer.connect(tools.path)
+                self.assertTrue(started.wait(1))
+                self.assertEqual(len(tools.server.connections), 1)
+                handlers = list(tools.server.active)
+                self.assertEqual(len(handlers), 1)  # registered before delayed handler code runs
+                closer = threading.Thread(target=tools.close)
+                closer.start()
+                try:
+                    peer.settimeout(1)
+                    self.assertEqual(peer.recv(1024), b'')  # close reaches peer before handler starts
+                finally:
+                    release.set()
+                    closer.join(timeout=2)
+                self.assertFalse(closer.is_alive())
+                self.assertFalse(tools.server.active)
+                self.assertFalse(tools.server.connections)
+                self.assertFalse(handlers[0].is_alive())
 
     def test_interruption_reaps_app_server(self):
         with tempfile.TemporaryDirectory() as directory:

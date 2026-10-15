@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import socket
 import socketserver
 import sys
 import tempfile
@@ -103,12 +104,17 @@ class ToolSocket:
         self.directory = tempfile.TemporaryDirectory(prefix='pac-tools-', dir='/tmp')
         os.chmod(self.directory.name, 0o700)
         self.path = self.directory.name + '/tools.sock'
-        cancelled = adapter.cancelled  # bind accepted requests to this turn, never its successor
+        self.cancelled = cancelled = adapter.cancelled  # never adopt a subsequent turn
 
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
-                request = json.loads(self.rfile.readline())
                 try:
+                    line = self.rfile.readline()
+                    if not line:
+                        return
+                    if not line.endswith(b'\n'):
+                        raise ValueError('incomplete request')
+                    request = json.loads(line)
                     if request['method'] == 'tools/list':
                         result = {'tools': [{'name': 'pac_computer',
                                   'description': 'Operate the shared PAC desktop and receive a screenshot.',
@@ -134,26 +140,62 @@ class ToolSocket:
                 except OSError:
                     pass  # the app-server may already have closed this child request
 
-        class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-            daemon_threads = True
-            block_on_close = False
+        class Server(socketserver.UnixStreamServer):
+            def __init__(self, *args):
+                self.active, self.connections = set(), set()
+                self.active_lock = threading.Lock()
+                super().__init__(*args)
 
-            def process_request_thread(self, request, client_address):
+            def get_request(self):
+                request, address = super().get_request()
+                # Track accept synchronously, before scheduling any handler thread.
                 with self.active_lock:
-                    self.active.add(threading.current_thread())
+                    self.connections.add(request)
+                return request, address
+
+            def process_request(self, request, address):
+                worker = threading.Thread(target=self.process_request_thread,
+                                          args=(request, address), daemon=True)
+                with self.active_lock:
+                    self.active.add(worker)
                 try:
-                    super().process_request_thread(request, client_address)
-                finally:
+                    worker.start()
+                except Exception:
+                    self.shutdown_request(request)
                     with self.active_lock:
-                        self.active.discard(threading.current_thread())
+                        self.active.discard(worker)
+                        self.connections.discard(request)
+                    raise
+
+            def process_request_thread(self, request, address):
+                try:
+                    self.finish_request(request, address)
+                except Exception:
+                    pass  # transport failures must not print request data or tracebacks
+                finally:
+                    try:
+                        self.shutdown_request(request)
+                    finally:
+                        with self.active_lock:
+                            self.active.discard(threading.current_thread())
+                            self.connections.discard(request)
 
         self.server = Server(self.path, Handler)
-        self.server.active, self.server.active_lock = set(), threading.Lock()
         self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=.05), daemon=True)
         self.thread.start()
 
     def close(self):
+        self.cancelled.set()
         self.server.shutdown()
+        # shutdown() has joined the accept loop: no late accepted sockets can escape this snapshot.
+        with self.server.active_lock:
+            connections = list(self.server.connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
         self.server.server_close()
         self.thread.join(timeout=1)
         # Human questions cooperate with cancellation. Never wait indefinitely for a tool.
