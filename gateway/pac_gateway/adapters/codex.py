@@ -128,23 +128,46 @@ class ToolSocket:
                         result = {'content': content, 'isError': not answer['success']}
                 except Exception:
                     result = {'content': [{'type': 'text', 'text': 'PAC tool failed'}], 'isError': True}
-                self.wfile.write((json.dumps(result) + '\n').encode())
+                try:
+                    self.wfile.write((json.dumps(result) + '\n').encode())
+                except OSError:
+                    pass  # the app-server may already have closed this child request
 
-        self.server = socketserver.UnixStreamServer(self.path, Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+            daemon_threads = True
+            block_on_close = False
+
+            def process_request_thread(self, request, client_address):
+                with self.active_lock:
+                    self.active.add(threading.current_thread())
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    with self.active_lock:
+                        self.active.discard(threading.current_thread())
+
+        self.server = Server(self.path, Handler)
+        self.server.active, self.server.active_lock = set(), threading.Lock()
+        self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=.05), daemon=True)
         self.thread.start()
 
     def close(self):
         self.server.shutdown()
         self.server.server_close()
-        self.thread.join()
+        self.thread.join(timeout=1)
+        # Human questions cooperate with cancellation. Never wait indefinitely for a tool.
+        deadline = time.monotonic() + 1.5
+        with self.server.active_lock:
+            handlers = list(self.server.active)
+        for handler in handlers:
+            handler.join(timeout=max(0, deadline - time.monotonic()))
         self.directory.cleanup()
 
 
 class CodexComputerAgent:
     def __init__(self, *, model, api_key, system, home, base_url=None, effort='medium',
                  tools=(), call_tool=None, on_event=lambda *_: None, should_stop=lambda: False,
-                 command=None, **_):
+                 command=None, ask_person=None, **_):
         self.model, self.api_key, self.system = model, api_key, system
         self.home = Path(home).resolve()
         self.base_url = (base_url or 'https://api.openai.com/v1').rstrip('/')
@@ -154,6 +177,8 @@ class CodexComputerAgent:
         self.thread_id = None
         self.computer = None
         self.tool_lock = threading.RLock()
+        self.cancelled = threading.Event()
+        self.ask_person = ask_person
 
     def state(self):
         return {'engine': 'codex', 'thread_id': self.thread_id}
@@ -182,30 +207,36 @@ class CodexComputerAgent:
 
     def _tool(self, method, params):
         # A root and its children share one desktop and one human-question slot.
+        cancelled = self.cancelled
         with self.tool_lock:
-            return self._dispatch(method, params)
+            return self._dispatch(method, params, cancelled)
 
-    def _dispatch(self, method, params):
-        if self.should_stop():
+    def _human(self, args, cancelled):
+        if self.ask_person is not None:
+            return self.ask_person(args["question"], args.get("options") or [], cancel_event=cancelled)
+        return self.call_tool("ask_person", args)
+
+    def _dispatch(self, method, params, cancelled):
+        if cancelled.is_set() or self.should_stop():
             raise InterruptedError('Codex turn interrupted')
         if method == 'tool/requestUserInput' and self.call_tool is not None:
             answers = {}
             for question in params.get('questions') or []:
                 if question.get('isSecret'):
                     raise CodexError('Secret input is not supported in chat')
-                result = self.call_tool('ask_person', {'question': question['question'],
-                    'options': [o['label'] for o in question.get('options') or []]})
+                result = self._human({'question': question['question'],
+                    'options': [o['label'] for o in question.get('options') or []]}, cancelled)
                 answer = str(result).removeprefix('The person answered: ')
                 answers[question['id']] = {'answers': [answer]}
             return {'answers': answers}
         if (method == 'mcpServer/elicitation/request' and params.get('serverName') == 'pac'
                 and params.get('mode') == 'form'
                 and (params.get('_meta') or {}).get('codex_approval_kind') == 'mcp_tool_call'):
-            if self.call_tool is None:
+            if self.call_tool is None and self.ask_person is None:
                 return {'action': 'decline', 'content': None}
-            answer = self.call_tool('ask_person', {
+            answer = self._human({
                 'question': 'Allow Codex to use the PAC computer/connector tool?',
-                'options': ['Allow', "Don't allow"]})
+                'options': ['Allow', "Don't allow"]}, cancelled)
             allowed = str(answer).endswith(': Allow')
             return {'action': 'accept' if allowed else 'decline', 'content': {} if allowed else None}
         if method != 'item/tool/call':
@@ -227,10 +258,11 @@ class CodexComputerAgent:
                 {'type': 'inputImage', 'imageUrl': 'data:image/png;base64,' + image}]}
         if name not in {t['name'] for t in self.tools}:
             raise CodexError('Unknown PAC tool')
-        result = self.call_tool(name, args)
+        result = self._human(args, cancelled) if name == 'ask_person' else self.call_tool(name, args)
         return {'success': True, 'contentItems': [{'type': 'inputText', 'text': str(result)}]}
 
     def run(self, text, computer, max_steps=60):
+        self.cancelled = threading.Event()
         self.computer = computer
         self.steps, self.max_steps = 0, max_steps
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -271,6 +303,7 @@ class CodexComputerAgent:
                 self.thread_id = result['thread']['id']
                 self.emit('actions', ['Codex session created'])  # persist ID before starting inference
             result = rpc.request('turn/start', {'threadId': self.thread_id, 'effort': self.effort,
+                                               'environments': [],
                                                'input': [{'type': 'text', 'text': text}]})
             turn_id = result['turn']['id']
             deadline = time.monotonic() + rpc.timeout
@@ -286,6 +319,8 @@ class CodexComputerAgent:
         except InterruptedError:
             return {'stop_reason': 'interrupted'}
         finally:
+            # Cancel before shutting down processes/sockets so child questions release themselves.
+            self.cancelled.set()
             if rpc is not None:
                 rpc.close()
             socket.close()

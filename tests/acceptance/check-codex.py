@@ -29,6 +29,13 @@ def check():
             try:
                 data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 requests.append(data)
+                names = set()
+                for tool in data.get('tools', []):
+                    names.add(tool.get('name'))
+                    names.update(t.get('name') for t in tool.get('tools', []))
+                forbidden = {'exec_command', 'write_stdin', 'view_image', 'shell',
+                             'shell_command', 'apply_patch'}
+                assert not names & forbidden, f'host tools leaked on request {len(requests)}: {names & forbidden}'
                 if len(requests) > 12:
                     raise ValueError('unexpected provider retry')
                 child = any(x.get('role') == 'user' and 'PAC_CHILD_FIXTURE' in json.dumps(x.get('content'))
@@ -115,6 +122,8 @@ def check():
             resumed.load(saved)
             assert resumed.run('Summarize the result again.', computer)['stop_reason'] == 'end_turn'
             assert resumed.state() == saved
+            assert not failures, failures
+            assert len(requests) == 6, f'expected fresh/child/resume coverage, got {len(requests)} requests'
             print('PASS: real Codex root -> child -> inherited PAC MCP -> image -> child result -> root reply -> resumed thread')
             print(f'Local provider requests: {len(requests)}; real model requests: 0; Incus calls: 0')
     finally:

@@ -31,7 +31,7 @@ Create a **new** agent selecting `codex` in the UI, or with `pac create NAME --m
 A real turn uses the configured provider and incurs its normal model usage. There is no automatic
 login, reuse of the operator's Codex account, token copying or migration. The app-server child gets
 a dedicated HOME/CODEX_HOME and a minimal environment including only this model's key. The selected
-thread has environment access disabled; host shell execution is not a PAC tool. Unsupported host
+thread has environment access disabled on every `turn/start`, including resumed turns; host shell execution is not a PAC tool. Unsupported host
 permission requests fail closed. MCP permission questions and Codex user questions use PAC's existing
 human-question cards. This does not make model-requested desktop actions a hard approval boundary.
 
@@ -51,7 +51,15 @@ an inert key and temporary HOME. It requires no Incus or external provider. It v
 
 This takes six local provider requests, zero external model requests and zero Incus operations.
 The fixture approves the MCP prompt only within the test. Production uses the human response.
+Every one of the six provider requests is checked for absence of host execution, shell, patch and
+image-viewer tools, covering fresh root, child and resumed root turns. Thread creation alone does not
+persist this environment restriction in Codex 0.147.0.
+
 Offline gateway tests separately cover stop/reaping, tool RPC, history-engine mismatch and questions.
+When a root turn completes while a child is waiting for a person, an internal per-turn cancellation
+event settles that question without an answer or Stop click. Socket handler cleanup has a bounded
+wait. Tests use the real PAC worker/question path and private socket to cover natural completion,
+a normal answer, explicit interruption, and a successful subsequent turn.
 
 ## Boundaries and next acceptance
 
