@@ -16,6 +16,10 @@ is part of this preparation. Existing vesten-ai links remain canonical until a n
   recovery and config preservation passed on a disposable nested host after iterative fixes. See
   `install-acceptance.md`. Repeat the final acceptance harness on an empty host before release.
 - No prebuilt image is accepted for distribution. No VM backup/restore or concurrency capacity claim.
+- Codex root/child control of a real disposable desktop passed with Codex 0.147.0 and GPT through
+  the configured Responses provider, including Runtime reconstruction and Stop/recovery. See
+  [the 2026-10-16 record](codex-live-acceptance.md). This does not cover deployed-service restart
+  or the separate clean-host installation gate.
 
 Before release, select the canonical namespace, verify links and private reporting availability,
 run clean-host acceptance, record the exact commit and checks, and approve concrete release notes.

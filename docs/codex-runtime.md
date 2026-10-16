@@ -27,7 +27,8 @@ effort = "medium"
 # codex_command = ["/usr/local/bin/codex", "app-server", "--listen", "stdio://"]
 ```
 
-Create a **new** agent selecting `codex` in the UI, or with `pac create NAME --model codex`.
+Create a **new** agent with `pac create NAME --model codex`. The current web creation dialog uses
+the configured default model and does not offer a model selector.
 A real turn uses the configured provider and incurs its normal model usage. There is no automatic
 login, reuse of the operator's Codex account, token copying or migration. The app-server child gets
 a dedicated HOME/CODEX_HOME and a minimal environment including only this model's key. The selected
@@ -78,7 +79,13 @@ activity appears as notices and safe metadata; a full thread tree UI is not impl
 
 Before enabling this on an existing deployment, validate a **new disposable agent** with the chosen
 real provider and real desktop, including approved MCP calls, task interruption and gateway restart.
-That has not been run. Existing deployments and agents have not been changed. Public release remains
-on hold; this backend does not resolve the separate clean-host KVM/network/desktop acceptance gate.
+The opt-in `tests/acceptance/check-codex-live.py` harness exercises this with an isolated Runtime and
+a new disposable VM; see [acceptance instructions](../tests/acceptance/README.md#live-codex-and-disposable-desktop).
+Reconstructing the isolated Runtime is separate from restarting a deployed gateway service. Public
+release remains on hold; this backend does not resolve the clean-host KVM/network/desktop acceptance gate.
+
+The 2026-10-16 real-provider/real-desktop run passed delegation, independent file readback,
+same-thread recovery, Stop and the next turn. See the [acceptance record](codex-live-acceptance.md)
+for its exact source revision, evidence and remaining boundaries.
 
 Protocol reference: [OpenAI Codex app-server](https://developers.openai.com/codex/app-server).

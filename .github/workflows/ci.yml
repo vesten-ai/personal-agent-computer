@@ -52,6 +52,7 @@ jobs:
           python-version: "3.12"
       - run: python tools/test-release.py -v
       - run: python tests/acceptance/test-source.py -v
+      - run: python tests/acceptance/test-codex-live.py -v
       - run: python tools/prepare-release.py --output /tmp/pac-release-a
       - run: python tools/prepare-release.py --output /tmp/pac-release-b
       - run: diff -r /tmp/pac-release-a /tmp/pac-release-b
